@@ -1,0 +1,26 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+.venv/
+.venv-1/
+venv/
+
+# Modelos y logs pesados
+backend/models/*.pt
+backend/logs/*.json
+
+# Node/Frontend
+frontend/node_modules/
+frontend/.next/
+frontend/dist/
+
+# IDE y OS
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+
+# Variables de entorno
+.env
+.env.local
