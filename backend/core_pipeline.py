@@ -48,7 +48,7 @@ try:
             continue
         
         # Inferencia YOLO
-        results = model(frame, conf=0.45, verbose=False, device="cpu")
+        results = model(frame, conf = 0.45, verbose = False, device="cpu")
         
         # Registrar detecciones
         for box in results[0].boxes:
