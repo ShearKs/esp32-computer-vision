@@ -1,84 +1,89 @@
-#Dependencias
-
-#OpenCV
+# backend/core_pipeline.py
 import cv2
-
 import time
 import json
+import os
 from datetime import datetime
 from ultralytics import YOLO
 
+# Cargar modelo UNA sola vez (global, no en cada llamada)
+# Constantes
+MODEL = YOLO("models/yolov8n.pt")
+CONFIDENCE_THRESHOLD = 0.45
 
-# URL por la que nos vamos a comunica
-
-# TIENE QUE ESTAR EN LA MISMA RED WIFI QUE EL DISPOSITIVOOO!!!!!
-
-# URL instituto - WIFI_A48_5G
-STREAM_URL = "http://192.168.48.86:8080/video"
-#STREAM_URL = "http://192.168.1.189:8080/video"
-
-# Modelo de Yolo
-model = YOLO("models/yolov8n.pt") 
-
-#Sesión cada vez que se ejecuta el script
-session_id = datetime.now().strftime("%Y%m%d_%H%M%S")
-log_file = f"logs\session_{session_id}.json"
-session_log = []
-
-print(f" Conectando a: {STREAM_URL}")
-print(f" Sesión iniciada: {session_id}")
-
-cap = cv2.VideoCapture(STREAM_URL)
-if not cap.isOpened():
-    print("Error: No se pudo conectar al stream. Revisa la URL y que móvil/PC estén en la misma WiFi.")
-    exit()
-
-
-frame_count = 0
-start_time = time.time()
-
-print("Procesando stream... (pulsa Ctrl+C para detener)")
-
-try:
-    while True:
-        ret, frame = cap.read()
-        if not ret:
-            print("Frame no recibido, reintentando...")
-            time.sleep(0.1)
-            continue
-        
-        # Inferencia YOLO
-        results = model(frame, conf = 0.45, verbose = False, device="cpu")
-        
-        # Registrar detecciones
-        for box in results[0].boxes:
-            cls_id = int(box.cls)
-            conf = float(box.conf)
-            name = model.names[cls_id]
-            
-            session_log.append({
-                "timestamp": round(time.time(), 2),
-                "object": name,
-                "confidence": round(conf, 2)
-            })
-        
-        # Mostrar progreso cada 30 frames
-        frame_count += 1
-        if frame_count % 30 == 0:
-            fps = frame_count / (time.time() - start_time)
-            print(f"⏱️ FPS: {fps:.1f} | 🎯 Objetos detectados: {len(session_log)}")
-        
-        # (Opcional) Ver en pantalla para debug
-        # annotated = results[0].plot()
-        # cv2.imshow("YOLO Stream", annotated)
-        # if cv2.waitKey(1) & 0xFF == ord('q'): break
-
-except KeyboardInterrupt:
-    print("\n Sesión detenida")
-finally:
-    cap.release()
-    cv2.destroyAllWindows()
+def process_frame(frame):
+    """Procesa UN frame y devuelve lista de detecciones"""
+    results = MODEL(frame, conf=CONFIDENCE_THRESHOLD, verbose=False, device="cpu")
     
-    with open(log_file, "w", encoding="utf-8") as f:
-        json.dump({"logs\session_id": session_id, "detections": session_log}, f, indent=2)
-    print(f"Log guardado en: {log_file}")
+    detections = []
+    for box in results[0].boxes:
+        cls_id = int(box.cls)
+        conf = float(box.conf)
+        name = MODEL.names[cls_id]
+        
+        # Opcional: extraer bbox si quieres dibujar en frontend
+        x1, y1, x2, y2 = map(int, box.xyxy[0].tolist())
+        
+        detections.append({
+            "timestamp": round(time.time(), 2),
+            "object": name,
+            "confidence": round(conf, 2),
+            "bbox": [x1, y1, x2, y2]  # ← Útil para overlay en la app
+        })
+    
+    return detections
+
+
+def run_detection_session(stream_url: str, max_frames: int = 5, save_log: bool = False):
+    """
+    Ejecuta detección en N frames del stream.
+    - stream_url: URL del vídeo (IP Webcam o ESP32)
+    - max_frames: cuántos frames procesar (3-5 es suficiente para demo)
+    - save_log: si True, guarda en logs/ como tu script original
+    """
+    cap = cv2.VideoCapture(stream_url)
+    
+    # ⚠️ Timeouts para evitar bloqueos infinitos
+    cap.set(cv2.CAP_PROP_OPEN_TIMEOUT_MSEC, 5000)
+    cap.set(cv2.CAP_PROP_READ_TIMEOUT_MSEC, 3000)
+    
+    if not cap.isOpened():
+        raise ConnectionError(f"No se pudo conectar a {stream_url}")
+    
+    session_log = []
+    frame_count = 0
+    
+    try:
+        while frame_count < max_frames:
+            ret, frame = cap.read()
+            if not ret:
+                print("⚠️ Frame no recibido, reintentando...")
+                time.sleep(0.1)
+                continue
+            
+            detections = process_frame(frame)
+            session_log.extend(detections)
+            
+            frame_count += 1
+            cv2.waitKey(1)  # ← Importante para que OpenCV no se bloquee
+            
+    finally:
+        cap.release()
+        cv2.destroyAllWindows()
+    
+    # Guardar log (opcional)
+    if save_log and session_log:
+        session_id = datetime.now().strftime("%Y%m%d_%H%M%S")
+        os.makedirs("logs", exist_ok = True)
+        log_file = f"logs/session_{session_id}.json"
+        
+        with open(log_file, "w", encoding="utf-8") as f:
+            json.dump({
+                "session_id": session_id,
+                "stream_url": stream_url,
+                "detections": session_log
+            }, f, indent=2, ensure_ascii=False)
+        print(f"✅ Log guardado en: {log_file}")
+    
+    # Devolver solo las últimas 10 detecciones para no saturar la API
+    return session_log[-10:] if len(session_log) > 10 else session_log

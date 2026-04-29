@@ -9,6 +9,8 @@ venv/
 # Modelos y logs pesados
 backend/models/*.pt
 backend/logs/*.json
+# Configuración local sensible
+backend/.env
 
 # Node/Frontend
 frontend/node_modules/
@@ -24,3 +26,6 @@ Thumbs.db
 # Variables de entorno
 .env
 .env.local
+
+
+
