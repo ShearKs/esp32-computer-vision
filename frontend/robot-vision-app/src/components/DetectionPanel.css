@@ -1,0 +1,183 @@
+/* src/components/DetectionPanel.css */
+.detection-panel {
+  margin: 12px 0;
+  border-radius: 16px;
+  overflow: hidden;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+.panel-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 12px 16px;
+  background: linear-gradient(135deg, #1a1a2e 0%, #16213e 100%);
+}
+
+.panel-title {
+  font-weight: 700;
+  font-size: 15px;
+  color: #fff;
+}
+
+.count-badge {
+  font-size: 12px;
+  padding: 4px 10px;
+  font-weight: 600;
+}
+
+.panel-content {
+  padding: 12px;
+  max-height: 300px;
+  overflow-y: auto;
+}
+
+/* Sin detecciones */
+.no-detections {
+  text-align: center;
+  padding: 24px 16px;
+  opacity: 0.7;
+}
+
+.no-det-icon {
+  font-size: 36px;
+  display: block;
+  margin-bottom: 8px;
+  animation: look-around 3s ease-in-out infinite;
+}
+
+@keyframes look-around {
+  0%, 100% { transform: translateX(0); }
+  25% { transform: translateX(-8px); }
+  75% { transform: translateX(8px); }
+}
+
+.no-detections p {
+  margin: 4px 0;
+  font-weight: 500;
+  font-size: 14px;
+}
+
+.no-detections small {
+  opacity: 0.6;
+  font-size: 12px;
+}
+
+/* Resumen de chips */
+.object-summary {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-bottom: 12px;
+  padding-bottom: 12px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.object-chip {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 6px 10px;
+  border-radius: 20px;
+  background: rgba(var(--ion-color-primary-rgb, 56, 128, 255), 0.12);
+  font-size: 13px;
+  font-weight: 500;
+  animation: chip-in 0.3s ease-out;
+}
+
+@keyframes chip-in {
+  from { transform: scale(0.8); opacity: 0; }
+  to { transform: scale(1); opacity: 1; }
+}
+
+.chip-icon {
+  font-size: 16px;
+}
+
+.chip-name {
+  text-transform: capitalize;
+}
+
+.chip-count {
+  font-weight: 700;
+  color: var(--ion-color-primary);
+  font-size: 12px;
+}
+
+/* Lista de detecciones */
+.detection-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.detection-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 10px;
+  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.04);
+  transition: background 0.2s;
+  animation: item-slide 0.25s ease-out;
+}
+
+@keyframes item-slide {
+  from { transform: translateX(-10px); opacity: 0; }
+  to { transform: translateX(0); opacity: 1; }
+}
+
+.detection-item:hover {
+  background: rgba(255, 255, 255, 0.08);
+}
+
+.det-icon {
+  font-size: 20px;
+  flex-shrink: 0;
+}
+
+.det-info {
+  flex: 1;
+  min-width: 0;
+}
+
+.det-name {
+  font-size: 13px;
+  font-weight: 600;
+  text-transform: capitalize;
+  display: block;
+  margin-bottom: 4px;
+}
+
+.confidence-bar-container {
+  width: 100%;
+  height: 4px;
+  background: rgba(255, 255, 255, 0.1);
+  border-radius: 2px;
+  overflow: hidden;
+}
+
+.confidence-bar {
+  height: 100%;
+  border-radius: 2px;
+  transition: width 0.4s ease;
+}
+
+.confidence-bar[data-confidence="success"] {
+  background: linear-gradient(90deg, #2dd36f, #17d860);
+}
+
+.confidence-bar[data-confidence="warning"] {
+  background: linear-gradient(90deg, #ffc409, #e0a800);
+}
+
+.confidence-bar[data-confidence="medium"] {
+  background: linear-gradient(90deg, #92949c, #808289);
+}
+
+.conf-badge {
+  font-size: 11px;
+  padding: 3px 7px;
+  font-weight: 700;
+  flex-shrink: 0;
+}

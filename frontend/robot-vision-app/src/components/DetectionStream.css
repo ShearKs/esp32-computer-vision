@@ -1,0 +1,123 @@
+/* src/components/DetectionStream.css */
+.detection-card {
+  margin: 12px 0;
+  border-radius: 16px;
+  overflow: hidden;
+  border: 2px solid rgba(255, 59, 48, 0.3);
+  box-shadow: 0 4px 20px rgba(255, 59, 48, 0.15);
+}
+
+.detection-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 12px 16px;
+  background: linear-gradient(135deg, #1a1a2e 0%, #16213e 100%);
+}
+
+.detection-title {
+  font-weight: 700;
+  font-size: 16px;
+  color: #fff;
+}
+
+.header-badges {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+
+.yolo-badge {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 11px;
+  font-weight: 700;
+  padding: 4px 10px;
+  letter-spacing: 1px;
+  animation: badge-glow 2s ease-in-out infinite;
+}
+
+.pulse-dot {
+  width: 8px;
+  height: 8px;
+  background: #fff;
+  border-radius: 50%;
+  display: inline-block;
+  animation: pulse 1.2s ease-in-out infinite;
+}
+
+@keyframes pulse {
+  0%, 100% { opacity: 1; transform: scale(1); }
+  50% { opacity: 0.4; transform: scale(0.8); }
+}
+
+@keyframes badge-glow {
+  0%, 100% { box-shadow: 0 0 8px rgba(255, 59, 48, 0.4); }
+  50% { box-shadow: 0 0 16px rgba(255, 59, 48, 0.8); }
+}
+
+.detection-video-container {
+  position: relative;
+  width: 100%;
+  background: #000;
+  aspect-ratio: 4/3;
+}
+
+.detection-stream-img {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  display: block;
+}
+
+.detection-overlay {
+  position: absolute;
+  top: 0; left: 0; right: 0; bottom: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  color: white;
+  text-align: center;
+  padding: 16px;
+  background: rgba(0, 0, 0, 0.85);
+}
+
+.detection-overlay ion-spinner {
+  margin-bottom: 12px;
+  color: #ff3b30;
+  --color: #ff3b30;
+}
+
+.detection-overlay p {
+  margin: 8px 0 4px;
+  font-weight: 500;
+}
+
+.detection-overlay small {
+  opacity: 0.7;
+  font-size: 13px;
+}
+
+.error-overlay {
+  background: rgba(220, 53, 69, 0.15);
+}
+
+.error-icon {
+  font-size: 48px;
+  color: var(--ion-color-danger);
+  margin-bottom: 12px;
+}
+
+.retry-icon {
+  cursor: pointer;
+  margin-top: 12px;
+  font-size: 24px;
+  color: var(--ion-color-primary);
+  transition: transform 0.2s;
+}
+
+.retry-icon:hover {
+  transform: rotate(180deg);
+}

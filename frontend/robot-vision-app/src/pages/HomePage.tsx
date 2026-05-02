@@ -1,40 +1,43 @@
+// src/pages/HomePage.tsx
 import { useState, useEffect } from 'react';
-import { IonContent, IonHeader, IonPage, IonTitle, IonToolbar, IonSpinner } from '@ionic/react';
-import ExploreContainer from '../components/ExploreContainer';
-import './HomePage.css';
+import { 
+  IonContent, IonHeader, IonPage, IonTitle, IonToolbar, 
+  IonSpinner, IonToggle, IonLabel
+} from '@ionic/react';
 import { VideoStream } from '../components/VideoStream';
-
-// URL de tu backend FastAPI (ajusta el puerto si es diferente)
-const BACKEND_URL = "http://localhost:8000";
+import { DetectionStream } from '../components/DetectionStream';
+import { DetectionPanel } from '../components/DetectionPanel';
+import { ApiService } from '../services/api';
+import './HomePage.css';
 
 const Home: React.FC = () => {
-
   const [streamUrl, setStreamUrl] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [streamReady, setStreamReady] = useState(false);
+  const [yoloEnabled, setYoloEnabled] = useState(false);
+
+  const backendUrl = ApiService.getBaseUrl();
 
   useEffect(() => {
-    const fetchConfig = async () => {
+    const initStream = async () => {
       try {
-        const res = await fetch(`${BACKEND_URL}/api/config`);
-        if (!res.ok) throw new Error(`HTTP ${res.status}`);
-        const data = await res.json();
-        // data.esp32_url = "http://192.168.1.100:81/stream"
-        setStreamUrl(data.esp32_url);
+        const stream = await ApiService.waitForStream(30, 1000);
+        setStreamUrl(stream);
+        setStreamReady(true);
       } catch (err: any) {
-        console.error("Error obteniendo config del backend:", err);
-        setError("No se pudo conectar con el backend");
+        console.error("Error inicializando stream:", err);
+        setError("No se pudo conectar con la cámara del robot");
       } finally {
         setLoading(false);
       }
     };
 
-    fetchConfig();
+    initStream();
   }, []);
 
   return (
     <IonPage>
-
       <IonHeader>
         <IonToolbar>
           <IonTitle>🤖 Robot Control</IonTitle>
@@ -47,28 +50,58 @@ const Home: React.FC = () => {
           {loading && (
             <div className="placeholder-box">
               <IonSpinner name="crescent" />
-              <p>Conectando con el backend...</p>
-              <p>Ruta: {streamUrl}</p>
+              <p>🔄 Conectando con el robot...</p>
+              <small>Esperando que la cámara esté lista</small>
             </div>
           )}
 
           {error && (
             <div className="placeholder-box">
               <p style={{ color: 'red' }}>❌ {error}</p>
+              <small>Verifica que el ESP32 está encendido y en la misma WiFi</small>
             </div>
           )}
 
-          {streamUrl && <VideoStream url={streamUrl} />}
+          {streamReady && (
+            <>
+              {/* Toggle YOLO */}
+              <div className="yolo-toggle-row">
+                <div className="yolo-toggle-label">
+                  <span className="yolo-toggle-icon">🧠</span>
+                  <div>
+                    <IonLabel className="yolo-toggle-title">YOLO AI</IonLabel>
+                    <small className={`yolo-toggle-status ${yoloEnabled ? 'active' : ''}`}>
+                      {yoloEnabled ? 'Detección activa' : 'Desactivado'}
+                    </small>
+                  </div>
+                </div>
+                <IonToggle 
+                  checked={yoloEnabled} 
+                  onIonChange={(e) => setYoloEnabled(e.detail.checked)}
+                  color="danger"
+                />
+              </div>
 
-          {/* Aquí irían tus controles y datos más adelante  :O   */}
+              {/* Stream: normal o YOLO según toggle */}
+              {!yoloEnabled && streamUrl && (
+                <VideoStream url={streamUrl} />
+              )}
+
+              {yoloEnabled && (
+                <>
+                  <DetectionStream backendUrl={backendUrl} />
+                  <DetectionPanel backendUrl={backendUrl} active={yoloEnabled} />
+                </>
+              )}
+            </>
+          )}
+
           <div className="placeholder-box">
             <p>Controles y Datos aquí</p>
           </div>
 
-
         </div>
       </IonContent>
-
     </IonPage>
   );
 };

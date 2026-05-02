@@ -1,38 +1,55 @@
 // src/components/VideoStream.tsx
-import React, { useState } from 'react';
-import { IonCard, IonSpinner, IonBadge, IonIcon } from '@ionic/react';
-import { videocam, alertCircleOutline } from 'ionicons/icons';
+import React, { useState, useEffect } from 'react';
+import { IonCard, IonSpinner, IonBadge, IonIcon, IonText } from '@ionic/react';
+import { videocam, alertCircleOutline, refresh } from 'ionicons/icons';
 import './VideoStream.css';
 
 interface VideoStreamProps {
-  url: string; // La IP de tu ESP32 (ej: http://192.168.1.50:81/stream)
+  url: string;
 }
 
 export const VideoStream: React.FC<VideoStreamProps> = ({ url }) => {
   const [status, setStatus] = useState<'loading' | 'connected' | 'error'>('loading');
+  const [retryCount, setRetryCount] = useState(0);
+  const [currentUrl, setCurrentUrl] = useState(url);
 
-  const handleLoad = () => {
-    setStatus('connected');
-  };
+  // Reiniciar cuando cambia la URL prop
+  useEffect(() => {
+    setCurrentUrl(url);
+    setStatus('loading');
+    setRetryCount(0);
+  }, [url]);
+
+  const handleLoad = () => setStatus('connected');
 
   const handleError = () => {
-    setStatus('error');
+    if (retryCount < 3) {
+      // Reintentar con timestamp para evitar caché del navegador
+      setRetryCount(prev => prev + 1);
+      setCurrentUrl(`${url}?retry=${Date.now()}`);
+    } else {
+      setStatus('error');
+    }
+  };
+
+  const handleRetry = () => {
+    setRetryCount(0);
+    setCurrentUrl(`${url}?retry=${Date.now()}`);
+    setStatus('loading');
   };
 
   return (
     <IonCard className="video-card">
-      {/* Cabecera con indicador LIVE */}
       <div className="video-header">
         <span className="video-title">📹 Stream en Vivo</span>
         {status === 'connected' && <IonBadge color="success" className="live-badge">LIVE</IonBadge>}
       </div>
 
-      {/* Contenedor del vídeo */}
       <div className="video-container">
         {status === 'loading' && (
           <div className="overlay loading-overlay">
             <IonSpinner name="crescent" />
-            <p>Conectando...</p>
+            <p>{retryCount > 0 ? `Reintentando... (${retryCount}/3)` : 'Conectando...'}</p>
           </div>
         )}
 
@@ -41,11 +58,16 @@ export const VideoStream: React.FC<VideoStreamProps> = ({ url }) => {
             <IonIcon icon={alertCircleOutline} className="error-icon" />
             <p>Error de conexión</p>
             <small>Verifica la IP y que el ESP32 esté encendido</small>
+            <IonIcon 
+              icon={refresh} 
+              onClick={handleRetry}
+              style={{ cursor: 'pointer', marginTop: 8, fontSize: 20 }}
+            />
           </div>
         )}
 
         <img
-          src={url}
+          src={currentUrl}
           alt="ESP32 Stream"
           className="stream-img"
           onLoad={handleLoad}
