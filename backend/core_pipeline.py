@@ -11,11 +11,50 @@ from ultralytics import YOLO
 
 # ─── Auto-detectar GPU ───
 DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
-print(f"🖥️ Dispositivo YOLO: {DEVICE}" + (f" ({torch.cuda.get_device_name(0)})" if DEVICE == "cuda" else ""))
+USE_HALF = DEVICE == "cuda"  # FP16 solo en GPU
+print(f"Dispositivo YOLO: {DEVICE}" + (f" ({torch.cuda.get_device_name(0)})" if DEVICE == "cuda" else ""))
 
-# Cargar modelo UNA sola vez (global, no en cada llamada)
-MODEL = YOLO("models/yolov8n.pt")
-CONFIDENCE_THRESHOLD = 0.45
+# ═══════════════════════════════════════════════════════
+# PERFILES DE OPTIMIZACIÓN POR MODELO
+# Configuración en model_profiles.json
+# ═══════════════════════════════════════════════════════
+
+_PROFILES_PATH = os.path.join(os.path.dirname(__file__), "model_profiles.json")
+
+# Defaults por si el JSON no existe o le falta algo
+_DEFAULTS = {
+    "imgsz": 320, "skip_frames": 3, "confidence": 0.45,
+    "jpeg_quality": 50, "mjpeg_width": 480
+}
+
+try:
+    with open(_PROFILES_PATH, "r", encoding="utf-8") as f:
+        _config = json.load(f)
+    MODEL_NAME = _config.get("active_model", "yolov8s")
+    _profiles = _config.get("profiles", {})
+    PROFILE = _profiles.get(MODEL_NAME, _DEFAULTS)
+except (FileNotFoundError, json.JSONDecodeError) as e:
+    print(f"⚠️ No se pudo leer model_profiles.json ({e}), usando defaults")
+    MODEL_NAME = "yolov8s"
+    PROFILE = _DEFAULTS
+
+# Aplicar configuración del perfil
+YOLO_IMGSZ = PROFILE.get("imgsz", _DEFAULTS["imgsz"])
+YOLO_EVERY_N_FRAMES = PROFILE.get("skip_frames", _DEFAULTS["skip_frames"])
+CONFIDENCE_THRESHOLD = PROFILE.get("confidence", _DEFAULTS["confidence"])
+JPEG_QUALITY = PROFILE.get("jpeg_quality", _DEFAULTS["jpeg_quality"])
+MJPEG_MAX_WIDTH = PROFILE.get("mjpeg_width", _DEFAULTS["mjpeg_width"])
+
+# Cargar modelo
+MODEL = YOLO(f"models/{MODEL_NAME}.pt")
+# NOTA: NO llamar a MODEL.model.half() manualmente.
+# El parámetro half=USE_HALF en predict() se encarga de FP16
+# sin conflictos con la operación interna fuse() de ultralytics.
+if USE_HALF:
+    print("FP16 activado (se aplicará en inferencia via half=True)")
+
+print(f"Modelo: {MODEL_NAME} | imgsz={YOLO_IMGSZ} | skip={YOLO_EVERY_N_FRAMES} "
+      f"| conf={CONFIDENCE_THRESHOLD} | jpeg_q={JPEG_QUALITY} | mjpeg_w={MJPEG_MAX_WIDTH}")
 
 # ─── Estado compartido para SSE ───
 _latest_detections = []
@@ -50,7 +89,8 @@ DEFAULT_COLOR = (0, 200, 255)  # Amarillo por defecto
 
 def process_frame(frame):
     """Procesa UN frame y devuelve lista de detecciones"""
-    results = MODEL(frame, conf=CONFIDENCE_THRESHOLD, verbose=False, device=DEVICE)
+    results = MODEL(frame, conf=CONFIDENCE_THRESHOLD, verbose=False, device=DEVICE,
+                     imgsz=YOLO_IMGSZ, half=USE_HALF)
     
     detections = []
     for box in results[0].boxes:
@@ -80,7 +120,7 @@ def run_detection_session(stream_url: str, max_frames: int = 5, save_log: bool =
     """
     cap = cv2.VideoCapture(stream_url)
     
-    # ⚠️ Timeouts para evitar bloqueos infinitos
+    # Timeouts para evitar bloqueos infinitos
     cap.set(cv2.CAP_PROP_OPEN_TIMEOUT_MSEC, 5000)
     cap.set(cv2.CAP_PROP_READ_TIMEOUT_MSEC, 3000)
     
@@ -94,7 +134,7 @@ def run_detection_session(stream_url: str, max_frames: int = 5, save_log: bool =
         while frame_count < max_frames:
             ret, frame = cap.read()
             if not ret:
-                print("⚠️ Frame no recibido, reintentando...")
+                print("Frame no recibido, reintentando...")
                 time.sleep(0.1)
                 continue
             
@@ -120,7 +160,7 @@ def run_detection_session(stream_url: str, max_frames: int = 5, save_log: bool =
                 "stream_url": stream_url,
                 "detections": session_log
             }, f, indent=2, ensure_ascii=False)
-        print(f"✅ Log guardado en: {log_file}")
+        print(f"Log guardado en: {log_file}")
     
     # Devolver solo las últimas 10 detecciones para no saturar la API
     return session_log[-10:] if len(session_log) > 10 else session_log
@@ -180,14 +220,7 @@ class FrameGrabber:
         self.cap.release()
 
 
-# ═══════════════════════════════════════════════════════
-# STREAM YOLO OPTIMIZADO
-# ═══════════════════════════════════════════════════════
 
-# Cada cuántos frames ejecutar YOLO (los intermedios reusan boxes)
-YOLO_EVERY_N_FRAMES = 3
-# Resolución máxima para procesar (reduce coste de YOLO)
-MAX_PROCESS_WIDTH = 640
 
 
 def _draw_cached_boxes(frame, cached_detections):
@@ -212,7 +245,8 @@ def process_frame_visual(frame, conf_threshold=None):
     Devuelve: (frame_anotado, detections_list)
     """
     threshold = conf_threshold or CONFIDENCE_THRESHOLD
-    results = MODEL(frame, conf=threshold, verbose=False, device=DEVICE)
+    results = MODEL(frame, conf=threshold, verbose=False, device=DEVICE,
+                     imgsz=YOLO_IMGSZ, half=USE_HALF)
 
     detections = []
     for box in results[0].boxes:
@@ -275,7 +309,12 @@ def stream_yolo_frames(stream_url: str, confidence: float = None):
             if not ret:
                 consecutive_fails += 1
                 if consecutive_fails > 100:  # ~2s sin frames
-                    print("⚠️ Demasiados fallos, cerrando stream...")
+                    print("Demasiados fallos, cerrando stream...")
+                    # Enviar frame de "desconectado" para que el frontend lo vea
+                    disconnect_frame = _create_error_frame("Camara desconectada - reconectando...")
+                    _, jpeg = cv2.imencode('.jpg', disconnect_frame)
+                    yield (b'--frame\r\n'
+                           b'Content-Type: image/jpeg\r\n\r\n' + jpeg.tobytes() + b'\r\n')
                     break
                 time.sleep(0.02)
                 continue
@@ -304,8 +343,13 @@ def stream_yolo_frames(stream_url: str, confidence: float = None):
                 fps_time = time.time()
                 frame_count = 0
 
-            # ── Encode y yield ──
-            _, jpeg = cv2.imencode('.jpg', annotated, [cv2.IMWRITE_JPEG_QUALITY, 65])
+            # ── Redimensionar + Encode JPEG ──
+            h, w = annotated.shape[:2]
+            if w > MJPEG_MAX_WIDTH:
+                scale = MJPEG_MAX_WIDTH / w
+                annotated = cv2.resize(annotated, (MJPEG_MAX_WIDTH, int(h * scale)),
+                                       interpolation=cv2.INTER_AREA)
+            _, jpeg = cv2.imencode('.jpg', annotated, [cv2.IMWRITE_JPEG_QUALITY, JPEG_QUALITY])
             yield (b'--frame\r\n'
                    b'Content-Type: image/jpeg\r\n\r\n' + jpeg.tobytes() + b'\r\n')
 

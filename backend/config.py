@@ -3,6 +3,7 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 NETWORK_PROFILES = {
     "casa": {
+        # Sergio_router5G
         "esp32_ip": "192.168.1.132",
         "esp32_stream_port": 8080,
         "esp32_stream_path": "/video"

@@ -1,0 +1,46 @@
+{
+  "active_model": "yolov8s",
+
+  "profiles": {
+    "yolov8n": {
+      "description": "Nano - Ultra rápido, menor precisión",
+      "imgsz": 416,
+      "skip_frames": 2,
+      "confidence": 0.50,
+      "jpeg_quality": 55,
+      "mjpeg_width": 540
+    },
+    "yolov8s": {
+      "description": "Small - Buen balance velocidad/precisión",
+      "imgsz": 320,
+      "skip_frames": 3,
+      "confidence": 0.45,
+      "jpeg_quality": 50,
+      "mjpeg_width": 480
+    },
+    "yolov8m": {
+      "description": "Medium - Mayor precisión, requiere GPU o paciencia",
+      "imgsz": 480,
+      "skip_frames": 5,
+      "confidence": 0.40,
+      "jpeg_quality": 50,
+      "mjpeg_width": 480
+    },
+    "yolov8l": {
+      "description": "Large - Alta precisión, muy pesado en CPU",
+      "imgsz": 480,
+      "skip_frames": 8,
+      "confidence": 0.35,
+      "jpeg_quality": 45,
+      "mjpeg_width": 420
+    },
+    "yolov8x": {
+      "description": "Extra Large - Máxima precisión, solo GPU",
+      "imgsz": 480,
+      "skip_frames": 10,
+      "confidence": 0.30,
+      "jpeg_quality": 40,
+      "mjpeg_width": 420
+    }
+  }
+}
