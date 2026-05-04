@@ -9,6 +9,12 @@ interface DetectionStreamProps {
   confidence?: number;
 }
 
+// Helper: añade query param usando ? o & según corresponda
+const appendParam = (url: string, key: string, value: string | number) => {
+  const separator = url.includes('?') ? '&' : '?';
+  return `${url}${separator}${key}=${value}`;
+};
+
 export const DetectionStream: React.FC<DetectionStreamProps> = ({ backendUrl, confidence }) => {
   const [status, setStatus] = useState<'loading' | 'connected' | 'error'>('loading');
   const [retryCount, setRetryCount] = useState(0);
@@ -30,7 +36,7 @@ export const DetectionStream: React.FC<DetectionStreamProps> = ({ backendUrl, co
   const handleError = () => {
     if (retryCount < 3) {
       setRetryCount(prev => prev + 1);
-      setCurrentUrl(`${streamUrl}&_retry=${Date.now()}`);
+      setCurrentUrl(appendParam(streamUrl, '_retry', Date.now()));
     } else {
       setStatus('error');
     }
@@ -38,14 +44,15 @@ export const DetectionStream: React.FC<DetectionStreamProps> = ({ backendUrl, co
 
   const handleRetry = () => {
     setRetryCount(0);
-    setCurrentUrl(`${streamUrl}&_retry=${Date.now()}`);
+    setCurrentUrl(appendParam(streamUrl, '_retry', Date.now()));
     setStatus('loading');
   };
 
   return (
     <IonCard className="detection-card">
+      {/* Header simplificado: solo título y badge LIVE */}
       <div className="detection-header">
-        <span className="detection-title">🧠 YOLO Vision</span>
+        <span className="detection-title">📹 Stream en Vivo</span>
         <div className="header-badges">
           {status === 'connected' && (
             <IonBadge color="danger" className="yolo-badge">

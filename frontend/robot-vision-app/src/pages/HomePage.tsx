@@ -2,12 +2,13 @@
 import { useState, useEffect } from 'react';
 import { 
   IonContent, IonHeader, IonPage, IonTitle, IonToolbar, 
-  IonSpinner, IonToggle, IonLabel
+  IonSpinner, IonMenuButton, IonButtons
 } from '@ionic/react';
 import { VideoStream } from '../components/VideoStream';
 import { DetectionStream } from '../components/DetectionStream';
 import { DetectionPanel } from '../components/DetectionPanel';
 import { ApiService } from '../services/api';
+import { useSettings } from '../context/SettingsContext';
 import './HomePage.css';
 
 const Home: React.FC = () => {
@@ -15,9 +16,15 @@ const Home: React.FC = () => {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [streamReady, setStreamReady] = useState(false);
-  const [yoloEnabled, setYoloEnabled] = useState(false);
+  const [streamKey, setStreamKey] = useState(0); // Fuerza remontaje limpio
 
+  const { yoloEnabled } = useSettings();
   const backendUrl = ApiService.getBaseUrl();
+
+  // Cada vez que cambia yoloEnabled, incrementar key para forzar remontaje
+  useEffect(() => {
+    setStreamKey(prev => prev + 1);
+  }, [yoloEnabled]);
 
   useEffect(() => {
     const initStream = async () => {
@@ -41,6 +48,9 @@ const Home: React.FC = () => {
       <IonHeader>
         <IonToolbar>
           <IonTitle>🤖 Robot Control</IonTitle>
+          <IonButtons slot="end">
+            <IonMenuButton menu="main-menu" autoHide={false} />
+          </IonButtons>
         </IonToolbar>
       </IonHeader>
 
@@ -64,34 +74,13 @@ const Home: React.FC = () => {
 
           {streamReady && (
             <>
-              {/* Toggle YOLO */}
-              <div className="yolo-toggle-row">
-                <div className="yolo-toggle-label">
-                  <span className="yolo-toggle-icon">🧠</span>
-                  <div>
-                    <IonLabel className="yolo-toggle-title">YOLO AI</IonLabel>
-                    <small className={`yolo-toggle-status ${yoloEnabled ? 'active' : ''}`}>
-                      {yoloEnabled ? 'Detección activa' : 'Desactivado'}
-                    </small>
-                  </div>
-                </div>
-                <IonToggle 
-                  checked={yoloEnabled} 
-                  onIonChange={(e) => setYoloEnabled(e.detail.checked)}
-                  color="danger"
-                />
-              </div>
-
-              {/* Stream: normal o YOLO según toggle */}
-              {!yoloEnabled && streamUrl && (
-                <VideoStream url={streamUrl} />
-              )}
-
-              {yoloEnabled && (
+              {yoloEnabled ? (
                 <>
-                  <DetectionStream backendUrl={backendUrl} />
+                  <DetectionStream key={`yolo-${streamKey}`} backendUrl={backendUrl} />
                   <DetectionPanel backendUrl={backendUrl} active={yoloEnabled} />
                 </>
+              ) : (
+                streamUrl && <VideoStream key={`raw-${streamKey}`} url={streamUrl} />
               )}
             </>
           )}

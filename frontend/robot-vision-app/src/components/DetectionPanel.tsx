@@ -29,7 +29,7 @@ const CATEGORY_ICONS: Record<string, string> = {
   'cell phone': '📱',
   laptop: '💻',
   tv: '📺',
-  bottle: '🍼',
+  bottle: '🍾',
   cup: '☕',
   chair: '🪑',
   couch: '🛋️',

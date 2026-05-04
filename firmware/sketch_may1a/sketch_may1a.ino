@@ -51,7 +51,7 @@ int MOTOR_L_Speed = 170;
 // Video Vertical Flip Setting
 // Controls whether the video image is flipped vertically (upside down)
 // When set to true, the image will be flipped vertically; when false, displays normally
-bool Video_Flip = false;  // true = vertical flip enabled, false = vertical flip disabled
+bool Video_Flip = true;  // true = vertical flip enabled, false = vertical flip disabled
 
 #define PART_BOUNDARY "123456789000000000000987654321"  // A boundary used to split MIME streams
 static const char *_STREAM_CONTENT_TYPE = "multipart/x-mixed-replace;boundary=" PART_BOUNDARY;
@@ -351,44 +351,56 @@ static esp_err_t stream_handler(httpd_req_t *req) {
 
 // Control action processing
 static esp_err_t action_handler(httpd_req_t *req) {
-  char query[100];
+  char query[150];
   int len = httpd_req_get_url_query_len(req) + 1;
   if (len > sizeof(query)) {
     httpd_resp_send_404(req);
     return ESP_OK;
   }
 
+  // Permitir CORS para que el backend pueda hacer requests
+  httpd_resp_set_hdr(req, "Access-Control-Allow-Origin", "*");
+
   if (httpd_req_get_url_query_str(req, query, len) == ESP_OK) {
+
+    // Parsear speed=NNN si viene en la URL (velocidad gradual del joystick)
+    int speed = -1;  // -1 = usar velocidad global por defecto
+    char *speed_ptr = strstr(query, "speed=");
+    if (speed_ptr != NULL) {
+      speed = atoi(speed_ptr + 6);
+      if (speed < 0) speed = 0;
+      if (speed > 255) speed = 255;
+    }
+
+    // Velocidad a usar: la del parametro o la global
+    int rSpeed = (speed >= 0) ? speed : MOTOR_R_Speed;
+    int lSpeed = (speed >= 0) ? speed : MOTOR_L_Speed;
+
     if (strstr(query, "go=forward")) {
-      // Forward
-      Serial.println("Forward");
+      Serial.printf("Forward (speed=%d)\n", rSpeed);
       analogWrite(MOTOR_R_PIN_1, 0);
-      analogWrite(MOTOR_R_PIN_2, MOTOR_R_Speed);
-      analogWrite(MOTOR_L_PIN_1, MOTOR_L_Speed);
+      analogWrite(MOTOR_R_PIN_2, rSpeed);
+      analogWrite(MOTOR_L_PIN_1, lSpeed);
       analogWrite(MOTOR_L_PIN_2, 0);
     } else if (strstr(query, "go=backward")) {
-      // Backward
-      Serial.println("Backward");
-      analogWrite(MOTOR_R_PIN_1, MOTOR_R_Speed);
+      Serial.printf("Backward (speed=%d)\n", rSpeed);
+      analogWrite(MOTOR_R_PIN_1, rSpeed);
       analogWrite(MOTOR_R_PIN_2, 0);
       analogWrite(MOTOR_L_PIN_1, 0);
-      analogWrite(MOTOR_L_PIN_2, MOTOR_L_Speed);
+      analogWrite(MOTOR_L_PIN_2, lSpeed);
     } else if (strstr(query, "go=left")) {
-      // Left
-      Serial.println("Left");
+      Serial.printf("Left (speed=%d)\n", rSpeed);
       analogWrite(MOTOR_R_PIN_1, 0);
-      analogWrite(MOTOR_R_PIN_2, MOTOR_R_Speed);
+      analogWrite(MOTOR_R_PIN_2, rSpeed);
       analogWrite(MOTOR_L_PIN_1, 0);
-      analogWrite(MOTOR_L_PIN_2, MOTOR_L_Speed);
+      analogWrite(MOTOR_L_PIN_2, lSpeed);
     } else if (strstr(query, "go=right")) {
-      // Right
-      Serial.println("Right");
-      analogWrite(MOTOR_R_PIN_1, MOTOR_R_Speed);
+      Serial.printf("Right (speed=%d)\n", rSpeed);
+      analogWrite(MOTOR_R_PIN_1, rSpeed);
       analogWrite(MOTOR_R_PIN_2, 0);
-      analogWrite(MOTOR_L_PIN_1, MOTOR_L_Speed);
+      analogWrite(MOTOR_L_PIN_1, lSpeed);
       analogWrite(MOTOR_L_PIN_2, 0);
     } else if (strstr(query, "go=stop")) {
-      // Stop
       Serial.println("Stop");
       analogWrite(MOTOR_R_PIN_1, 0);
       analogWrite(MOTOR_R_PIN_2, 0);
@@ -396,32 +408,20 @@ static esp_err_t action_handler(httpd_req_t *req) {
       analogWrite(MOTOR_L_PIN_2, 0);
     } else if (strstr(query, "led=on")) {
       Serial.println("LED ON");
-      digitalWrite(LED_GPIO_NUM, HIGH);  // LED开启
+      digitalWrite(LED_GPIO_NUM, HIGH);
     } else if (strstr(query, "led=off")) {
       Serial.println("LED OFF");
-      digitalWrite(LED_GPIO_NUM, LOW);  // LED关闭
+      digitalWrite(LED_GPIO_NUM, LOW);
     } else if (strstr(query, "go=plus")) {
-
       MOTOR_R_Speed = MOTOR_R_Speed + 85;
       MOTOR_L_Speed = MOTOR_L_Speed + 85;
       if (MOTOR_L_Speed >= 255) MOTOR_L_Speed = 255;
       if (MOTOR_R_Speed >= 255) MOTOR_R_Speed = 255;
-      // Serial.println("Speed +");
-      // Serial.print("MOTOR_L_Speed:");
-      // Serial.println(MOTOR_L_Speed);
-      // Serial.print("MOTOR_R_Speed:");
-      // Serial.println(MOTOR_R_Speed);
     } else if (strstr(query, "go=minus")) {
-
       MOTOR_R_Speed = MOTOR_R_Speed - 85;
       MOTOR_L_Speed = MOTOR_L_Speed - 85;
       if (MOTOR_L_Speed <= 85) MOTOR_L_Speed = 85;
       if (MOTOR_R_Speed <= 85) MOTOR_R_Speed = 85;
-      // Serial.println("Speed -");
-      // Serial.print("MOTOR_L_Speed:");
-      // Serial.println(MOTOR_L_Speed);
-      // Serial.print("MOTOR_R_Speed:");
-      // Serial.println(MOTOR_R_Speed);
     }
   }
 

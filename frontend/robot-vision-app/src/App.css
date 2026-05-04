@@ -1,0 +1,79 @@
+/* src/App.css */
+
+/* ═══ Side Menu ═══ */
+.app-side-menu {
+  --width: 280px;
+  --background: #0f0f1a;
+}
+
+.app-side-menu ion-toolbar {
+  --background: #0f0f1a;
+  --color: #fff;
+}
+
+.menu-content {
+  --background: #0f0f1a;
+}
+
+.menu-section {
+  margin-top: 20px;
+  padding: 0 8px;
+}
+
+.menu-section-label {
+  display: block;
+  padding: 0 12px 6px;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 1.5px;
+  color: rgba(255, 255, 255, 0.35);
+  text-transform: uppercase;
+}
+
+.menu-list {
+  background: transparent !important;
+  border-radius: 14px;
+  overflow: hidden;
+  border: 1px solid rgba(255, 255, 255, 0.06);
+}
+
+.menu-item {
+  --background: rgba(255, 255, 255, 0.04);
+  --background-hover: rgba(255, 255, 255, 0.08);
+  --color: #fff;
+  --inner-padding-end: 12px;
+  --min-height: 58px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.04);
+}
+
+.menu-item:last-child {
+  border-bottom: none;
+}
+
+.menu-item h3 {
+  font-size: 14px;
+  font-weight: 600;
+  margin: 0 0 2px;
+  color: #fff;
+}
+
+.menu-item p {
+  font-size: 12px;
+  color: rgba(255, 255, 255, 0.4);
+  margin: 0;
+  transition: color 0.3s;
+}
+
+.menu-status-active {
+  color: #ff3b30 !important;
+  font-weight: 600;
+}
+
+.menu-icon {
+  font-size: 20px;
+  transition: color 0.3s;
+}
+
+.menu-item-placeholder {
+  opacity: 0.5;
+}

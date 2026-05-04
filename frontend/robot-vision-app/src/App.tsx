@@ -7,13 +7,24 @@ import {
   IonTabBar,
   IonTabButton,
   IonTabs,
+  IonMenu,
+  IonHeader,
+  IonToolbar,
+  IonTitle,
+  IonContent,
+  IonList,
+  IonItem,
+  IonToggle,
+  IonMenuToggle,
+  IonNote,
   setupIonicReact
 } from '@ionic/react';
 import { IonReactRouter } from '@ionic/react-router';
-import { ellipse, gameController, square, triangle } from 'ionicons/icons';
+import { ellipse, gameController, square, cogOutline, eyeOutline, eyeOffOutline } from 'ionicons/icons';
 import Tab1 from './pages/HomePage';
 import Tab2 from './pages/Tab2';
 import Tab3 from './pages/Tab3';
+import { SettingsProvider, useSettings } from './context/SettingsContext';
 
 /* Core CSS required for Ionic components to work properly */
 import '@ionic/react/css/core.css';
@@ -31,57 +42,109 @@ import '@ionic/react/css/text-transformation.css';
 import '@ionic/react/css/flex-utils.css';
 import '@ionic/react/css/display.css';
 
-/**
- * Ionic Dark Mode
- * -----------------------------------------------------
- * For more info, please see:
- * https://ionicframework.com/docs/theming/dark-mode
- */
-
-/* import '@ionic/react/css/palettes/dark.always.css'; */
-/* import '@ionic/react/css/palettes/dark.class.css'; */
 import '@ionic/react/css/palettes/dark.system.css';
 
 /* Theme variables */
 import './theme/variables.css';
+import './App.css';
 
 setupIonicReact();
 
+// Menú lateral con acceso al contexto
+const AppMenu: React.FC = () => {
+  const { yoloEnabled, setYoloEnabled } = useSettings();
+
+  return (
+    <IonMenu contentId="main-content" menuId="main-menu" side="end" className="app-side-menu">
+      <IonHeader>
+        <IonToolbar color="dark">
+          <IonTitle>🤖 Robot Control</IonTitle>
+        </IonToolbar>
+      </IonHeader>
+      <IonContent className="menu-content">
+
+        {/* Sección: Visión */}
+        <div className="menu-section">
+          <IonNote className="menu-section-label">VISIÓN</IonNote>
+          <IonList lines="none" className="menu-list">
+            <IonItem className="menu-item">
+              <IonIcon
+                slot="start"
+                icon={yoloEnabled ? eyeOutline : eyeOffOutline}
+                className="menu-icon"
+                style={{ color: yoloEnabled ? '#ff3b30' : '#888' }}
+              />
+              <IonLabel>
+                <h3>YOLO AI</h3>
+                <p className={yoloEnabled ? 'menu-status-active' : ''}>
+                  {yoloEnabled ? 'Detección activa' : 'Desactivado'}
+                </p>
+              </IonLabel>
+              <IonToggle
+                checked={yoloEnabled}
+                onIonChange={(e) => setYoloEnabled(e.detail.checked)}
+                color="danger"
+              />
+            </IonItem>
+          </IonList>
+        </div>
+
+        {/* Sección: Ajustes — aquí puedes añadir más opciones en el futuro */}
+        <div className="menu-section">
+          <IonNote className="menu-section-label">AJUSTES</IonNote>
+          <IonList lines="none" className="menu-list">
+            <IonMenuToggle autoHide={false}>
+              <IonItem className="menu-item menu-item-placeholder" button>
+                <IonIcon slot="start" icon={cogOutline} className="menu-icon" />
+                <IonLabel>Configuración</IonLabel>
+              </IonItem>
+            </IonMenuToggle>
+          </IonList>
+        </div>
+
+      </IonContent>
+    </IonMenu>
+  );
+};
+
 const App: React.FC = () => (
-  <IonApp>
-    <IonReactRouter>
-      <IonTabs>
-        <IonRouterOutlet>
-          <Route exact path="/Home">
-            <Tab1 />
-          </Route>
-          <Route exact path="/tab2">
-            <Tab2 />
-          </Route>
-          <Route path="/tab3">
-            <Tab3 />
-          </Route>
-          <Route exact path="/">
-            <Redirect to="/Home" />
-          </Route>
-        </IonRouterOutlet>
-        <IonTabBar slot="bottom">
-          <IonTabButton tab="home" href="/Home">
-            <IonIcon aria-hidden="true" icon={gameController} />
-            <IonLabel>Control</IonLabel>
-          </IonTabButton>
-          <IonTabButton tab="tab2" href="/tab2">
-            <IonIcon aria-hidden="true" icon={ellipse} />
-            <IonLabel>Tab 2</IonLabel>
-          </IonTabButton>
-          <IonTabButton tab="tab3" href="/tab3">
-            <IonIcon aria-hidden="true" icon={square} />
-            <IonLabel>Tab 3</IonLabel>
-          </IonTabButton>
-        </IonTabBar>
-      </IonTabs>
-    </IonReactRouter>
-  </IonApp>
+  <SettingsProvider>
+    <IonApp>
+      <IonReactRouter>
+        <AppMenu />
+        <IonTabs>
+          <IonRouterOutlet id="main-content">
+            <Route exact path="/Home">
+              <Tab1 />
+            </Route>
+            <Route exact path="/tab2">
+              <Tab2 />
+            </Route>
+            <Route path="/tab3">
+              <Tab3 />
+            </Route>
+            <Route exact path="/">
+              <Redirect to="/Home" />
+            </Route>
+          </IonRouterOutlet>
+          <IonTabBar slot="bottom">
+            <IonTabButton tab="home" href="/Home">
+              <IonIcon aria-hidden="true" icon={gameController} />
+              <IonLabel>Control</IonLabel>
+            </IonTabButton>
+            <IonTabButton tab="tab2" href="/tab2">
+              <IonIcon aria-hidden="true" icon={ellipse} />
+              <IonLabel>Tab 2</IonLabel>
+            </IonTabButton>
+            <IonTabButton tab="tab3" href="/tab3">
+              <IonIcon aria-hidden="true" icon={square} />
+              <IonLabel>Tab 3</IonLabel>
+            </IonTabButton>
+          </IonTabBar>
+        </IonTabs>
+      </IonReactRouter>
+    </IonApp>
+  </SettingsProvider>
 );
 
 export default App;

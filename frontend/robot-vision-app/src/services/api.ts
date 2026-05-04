@@ -1,6 +1,6 @@
 // src/services/api.ts
 
-// 🔧 IP dinámica: usa la del navegador si no es localhost
+// IP dinámica: usa la del navegador si no es localhost
 const getBaseUrl = () => {
   const hostname = window.location.hostname;
   if (hostname !== 'localhost' && hostname !== '127.0.0.1') {
@@ -94,10 +94,10 @@ export const ApiService = {
 
   // Ejecutar detección en el stream
   async detectObjects(streamUrl?: string): Promise<DetectionResponse> {
-    const url = streamUrl 
+    const url = streamUrl
       ? `${BASE_URL}/api/detect?stream_url=${encodeURIComponent(streamUrl)}`
       : `${BASE_URL}/api/detect`;
-    
+
     const res = await fetch(url, { method: 'POST' });
     if (!res.ok) throw new Error(`HTTP ${res.status}: ${await res.text()}`);
     return res.json();

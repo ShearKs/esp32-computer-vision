@@ -96,7 +96,7 @@ async def yolo_events():
             detections = get_latest_detections()
             
             # Solo enviar si hay cambios
-            current_hash = json.dumps(detections, sort_keys=True)
+            current_hash = json.dumps(detections, sort_keys = True)
             if current_hash != last_sent:
                 data = json.dumps({
                     "timestamp": round(time.time(), 2),
