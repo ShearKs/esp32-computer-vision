@@ -2,27 +2,18 @@
 import React, { useState, useEffect } from 'react';
 import { IonCard, IonSpinner, IonBadge, IonIcon } from '@ionic/react';
 import { alertCircleOutline, refresh } from 'ionicons/icons';
+import { ApiService } from '../services/api';
 import './DetectionStream.css';
 
 interface DetectionStreamProps {
-  backendUrl: string;
   confidence?: number;
 }
 
-// Helper: añade query param usando ? o & según corresponda
-const appendParam = (url: string, key: string, value: string | number) => {
-  const separator = url.includes('?') ? '&' : '?';
-  return `${url}${separator}${key}=${value}`;
-};
-
-export const DetectionStream: React.FC<DetectionStreamProps> = ({ backendUrl, confidence }) => {
+export const DetectionStream: React.FC<DetectionStreamProps> = ({ confidence }) => {
   const [status, setStatus] = useState<'loading' | 'connected' | 'error'>('loading');
   const [retryCount, setRetryCount] = useState(0);
 
-  const streamUrl = confidence
-    ? `${backendUrl}/api/stream/yolo?confidence=${confidence}`
-    : `${backendUrl}/api/stream/yolo`;
-
+  const streamUrl = ApiService.getYoloStreamUrl(confidence);
   const [currentUrl, setCurrentUrl] = useState(streamUrl);
 
   useEffect(() => {
@@ -36,7 +27,8 @@ export const DetectionStream: React.FC<DetectionStreamProps> = ({ backendUrl, co
   const handleError = () => {
     if (retryCount < 3) {
       setRetryCount(prev => prev + 1);
-      setCurrentUrl(appendParam(streamUrl, '_retry', Date.now()));
+      const separator = streamUrl.includes('?') ? '&' : '?';
+      setCurrentUrl(`${streamUrl}${separator}_retry=${Date.now()}`);
     } else {
       setStatus('error');
     }
@@ -44,13 +36,13 @@ export const DetectionStream: React.FC<DetectionStreamProps> = ({ backendUrl, co
 
   const handleRetry = () => {
     setRetryCount(0);
-    setCurrentUrl(appendParam(streamUrl, '_retry', Date.now()));
+    const separator = streamUrl.includes('?') ? '&' : '?';
+    setCurrentUrl(`${streamUrl}${separator}_retry=${Date.now()}`);
     setStatus('loading');
   };
 
   return (
     <IonCard className="detection-card">
-      {/* Header simplificado: solo título y badge LIVE */}
       <div className="detection-header">
         <span className="detection-title">📹 Stream en Vivo</span>
         <div className="header-badges">

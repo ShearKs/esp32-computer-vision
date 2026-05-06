@@ -1,19 +1,8 @@
 // src/components/DetectionPanel.tsx
 import React, { useState, useEffect, useRef } from 'react';
 import { IonCard, IonBadge } from '@ionic/react';
+import { ApiService, YoloEvent, Detection } from '../services/api';
 import './DetectionPanel.css';
-
-interface Detection {
-  object: string;
-  confidence: number;
-  bbox?: number[];
-  timestamp: number;
-}
-
-interface DetectionPanelProps {
-  backendUrl: string;
-  active: boolean;
-}
 
 // Iconos por categoría
 const CATEGORY_ICONS: Record<string, string> = {
@@ -44,59 +33,47 @@ const CATEGORY_ICONS: Record<string, string> = {
 
 const getIcon = (name: string) => CATEGORY_ICONS[name] || '📦';
 
-// Colores por confianza
 const getConfidenceColor = (conf: number): string => {
   if (conf >= 0.8) return 'success';
   if (conf >= 0.6) return 'warning';
   return 'medium';
 };
 
-export const DetectionPanel: React.FC<DetectionPanelProps> = ({ backendUrl, active }) => {
+export const DetectionPanel: React.FC<{ active: boolean }> = ({ active }) => {
   const [detections, setDetections] = useState<Detection[]>([]);
   const [objectCounts, setObjectCounts] = useState<Record<string, number>>({});
   const [totalDetected, setTotalDetected] = useState(0);
-  const eventSourceRef = useRef<EventSource | null>(null);
+  const unsubscribeRef = useRef<(() => void) | null>(null);
 
   useEffect(() => {
     if (!active) {
-      // Cerrar SSE si no está activo
-      if (eventSourceRef.current) {
-        eventSourceRef.current.close();
-        eventSourceRef.current = null;
+      if (unsubscribeRef.current) {
+        unsubscribeRef.current();
+        unsubscribeRef.current = null;
       }
       return;
     }
 
-    // Conectar al SSE
-    const es = new EventSource(`${backendUrl}/api/stream/yolo/events`);
-    eventSourceRef.current = es;
+    const handleDetections = (event: YoloEvent) => {
+      setDetections(event.detections || []);
+      setTotalDetected(event.count || 0);
 
-    es.onmessage = (event) => {
-      try {
-        const data = JSON.parse(event.data);
-        setDetections(data.detections || []);
-        setTotalDetected(data.count || 0);
-
-        // Contar objetos únicos
-        const counts: Record<string, number> = {};
-        (data.detections || []).forEach((d: Detection) => {
-          counts[d.object] = (counts[d.object] || 0) + 1;
-        });
-        setObjectCounts(counts);
-      } catch (err) {
-        console.error('Error parsing SSE:', err);
-      }
+      const counts: Record<string, number> = {};
+      (event.detections || []).forEach((d: Detection) => {
+        counts[d.object] = (counts[d.object] || 0) + 1;
+      });
+      setObjectCounts(counts);
     };
 
-    es.onerror = () => {
-      console.log('SSE reconectando...');
-    };
+    unsubscribeRef.current = ApiService.subscribeDetections(handleDetections);
 
     return () => {
-      es.close();
-      eventSourceRef.current = null;
+      if (unsubscribeRef.current) {
+        unsubscribeRef.current();
+        unsubscribeRef.current = null;
+      }
     };
-  }, [backendUrl, active]);
+  }, [active]);
 
   if (!active) return null;
 
@@ -118,7 +95,6 @@ export const DetectionPanel: React.FC<DetectionPanelProps> = ({ backendUrl, acti
           </div>
         ) : (
           <>
-            {/* Resumen de objetos */}
             <div className="object-summary">
               {Object.entries(objectCounts).map(([name, count]) => (
                 <div key={name} className="object-chip">
@@ -129,7 +105,6 @@ export const DetectionPanel: React.FC<DetectionPanelProps> = ({ backendUrl, acti
               ))}
             </div>
 
-            {/* Lista detallada */}
             <div className="detection-list">
               {detections.map((det, i) => (
                 <div key={`${det.object}-${i}`} className="detection-item">

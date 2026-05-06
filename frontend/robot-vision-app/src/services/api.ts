@@ -6,13 +6,12 @@ const getBaseUrl = () => {
   if (hostname !== 'localhost' && hostname !== '127.0.0.1') {
     return `http://${hostname}:8000`;
   }
-  // Fallback para desarrollo en PC (IP de tu PC en la red WiFi)
   return 'http://localhost:8000';
 };
 
 const BASE_URL = getBaseUrl();
 
-// Tipos para mejor autocompletado y seguridad
+// Tipos
 export interface ConfigResponse {
   esp32_url: string;
   esp32_ip: string;
@@ -37,14 +36,19 @@ export interface DetectionResponse {
   count: number;
 }
 
+export interface YoloEvent {
+  timestamp: number;
+  detections: Detection[];
+  count: number;
+}
+
+export type DetectionsCallback = (event: YoloEvent) => void;
+
 // Servicio principal
 export const ApiService = {
-  // URL base del backend
   getBaseUrl: () => BASE_URL,
 
-  // === ENDPOINTS PÚBLICOS ===
-
-  // Health check rápido
+  // Health check
   async healthCheck(): Promise<boolean> {
     try {
       const res = await fetch(`${BASE_URL}/health`, { method: 'HEAD' });
@@ -54,14 +58,29 @@ export const ApiService = {
     }
   },
 
-  // Obtener configuración del robot
+  // Configuración del robot
   async getConfig(): Promise<ConfigResponse> {
     const res = await fetch(`${BASE_URL}/api/config`);
     if (!res.ok) throw new Error(`HTTP ${res.status}: ${await res.text()}`);
     return res.json();
   },
 
-  // Verificar si el stream de la cámara está listo
+  // Stream de la cámara ESP32 directo
+  async getEsp32StreamUrl(): Promise<string> {
+    const config = await ApiService.getConfig();
+    return config.esp32_url;
+  },
+
+  // URL del stream YOLO (MJPEG con bounding boxes)
+  getYoloStreamUrl(confidence?: number): string {
+    const url = `${BASE_URL}/api/stream/yolo`;
+    if (confidence !== undefined) {
+      return `${url}?confidence=${confidence}`;
+    }
+    return url;
+  },
+
+  // Verificar si el stream está listo
   async isStreamReady(): Promise<StreamReadyResponse> {
     const res = await fetch(`${BASE_URL}/api/stream-ready`);
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
@@ -77,7 +96,6 @@ export const ApiService = {
         if (data.ready && data.stream_url) {
           return data.stream_url;
         }
-        // El backend respondió pero la cámara no está lista aún
         console.log(`Intento ${i + 1}/${maxAttempts}: cámara no lista, reintentando...`);
       } catch (err) {
         console.log(`Intento ${i + 1}/${maxAttempts}: backend no disponible, reintentando...`);
@@ -87,17 +105,11 @@ export const ApiService = {
     throw new Error('Timeout: El stream no estuvo listo');
   },
 
-
-
-
-  // === ENDPOINTS DE DETECCIÓN (YOLO) ===
-
   // Ejecutar detección en el stream
   async detectObjects(streamUrl?: string): Promise<DetectionResponse> {
     const url = streamUrl
       ? `${BASE_URL}/api/detect?stream_url=${encodeURIComponent(streamUrl)}`
       : `${BASE_URL}/api/detect`;
-
     const res = await fetch(url, { method: 'POST' });
     if (!res.ok) throw new Error(`HTTP ${res.status}: ${await res.text()}`);
     return res.json();
@@ -109,5 +121,25 @@ export const ApiService = {
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
     const data = await res.json();
     return data.detections;
+  },
+
+  // Suscribirse a detecciones en tiempo real vía SSE
+  subscribeDetections(callback: DetectionsCallback): () => void {
+    const es = new EventSource(`${BASE_URL}/api/stream/yolo/events`);
+
+    es.onmessage = (event) => {
+      try {
+        const data: YoloEvent = JSON.parse(event.data);
+        callback(data);
+      } catch (err) {
+        console.error('Error parsing SSE:', err);
+      }
+    };
+
+    es.onerror = () => {
+      console.log('SSE reconectando...');
+    };
+
+    return () => es.close();
   }
 };

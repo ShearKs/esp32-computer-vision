@@ -20,7 +20,7 @@ NETWORK_PROFILES = {
     }
 }
 
-ACTIVE_PROFILE = "instituto"
+ACTIVE_PROFILE = "casa"
 
 class Settings(BaseSettings):
     # Configuración del ESP32

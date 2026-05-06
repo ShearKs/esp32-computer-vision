@@ -5,6 +5,7 @@ import {
   IonSpinner, IonMenuButton, IonButtons
 } from '@ionic/react';
 import { VideoStream } from '../components/VideoStream';
+import { JoystickControl } from '../components/JoystickControl';
 import { DetectionStream } from '../components/DetectionStream';
 import { DetectionPanel } from '../components/DetectionPanel';
 import { ApiService } from '../services/api';
@@ -12,35 +13,36 @@ import { useSettings } from '../context/SettingsContext';
 import './HomePage.css';
 
 const Home: React.FC = () => {
-  const [streamUrl, setStreamUrl] = useState<string | null>(null);
-  const [loading, setLoading] = useState(true);
+  const handleMove = (direction: string, speed: number, x: number, y: number) => {
+    console.log(`🚗 Mover: ${direction} | Velocidad: ${speed}% | x:${x.toFixed(2)} y:${y.toFixed(2)}`);
+  };
+
+  const handleStop = () => {
+    console.log('🛑 Stop');
+  };
+
+  const [ready, setReady] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [streamReady, setStreamReady] = useState(false);
-  const [streamKey, setStreamKey] = useState(0); // Fuerza remontaje limpio
+  const [streamKey, setStreamKey] = useState(0);
 
   const { yoloEnabled } = useSettings();
-  const backendUrl = ApiService.getBaseUrl();
 
-  // Cada vez que cambia yoloEnabled, incrementar key para forzar remontaje
   useEffect(() => {
     setStreamKey(prev => prev + 1);
   }, [yoloEnabled]);
 
   useEffect(() => {
-    const initStream = async () => {
+    const init = async () => {
       try {
-        const stream = await ApiService.waitForStream(30, 1000);
-        setStreamUrl(stream);
-        setStreamReady(true);
+        await ApiService.waitForStream(30, 1000);
+        setReady(true);
       } catch (err: any) {
         console.error("Error inicializando stream:", err);
         setError("No se pudo conectar con la cámara del robot");
-      } finally {
-        setLoading(false);
       }
     };
 
-    initStream();
+    init();
   }, []);
 
   return (
@@ -57,7 +59,7 @@ const Home: React.FC = () => {
       <IonContent fullscreen className="ion-padding">
         <div className="home-layout">
 
-          {loading && (
+          {!ready && !error && (
             <div className="placeholder-box">
               <IonSpinner name="crescent" />
               <p>🔄 Conectando con el robot...</p>
@@ -72,22 +74,20 @@ const Home: React.FC = () => {
             </div>
           )}
 
-          {streamReady && (
+          {ready && (
             <>
               {yoloEnabled ? (
                 <>
-                  <DetectionStream key={`yolo-${streamKey}`} backendUrl={backendUrl} />
-                  <DetectionPanel backendUrl={backendUrl} active={yoloEnabled} />
+                  <DetectionStream key={`yolo-${streamKey}`} />
+                  <DetectionPanel active={yoloEnabled} />
                 </>
               ) : (
-                streamUrl && <VideoStream key={`raw-${streamKey}`} url={streamUrl} />
+                <VideoStream key={`raw-${streamKey}`} />
               )}
             </>
           )}
 
-          <div className="placeholder-box">
-            <p>Controles y Datos aquí</p>
-          </div>
+          <JoystickControl onMove={handleMove} onStop={handleStop} />
 
         </div>
       </IonContent>
