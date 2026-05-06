@@ -1,7 +1,8 @@
 // src/components/DetectionPanel.tsx
 import React, { useState, useEffect, useRef } from 'react';
 import { IonCard, IonBadge } from '@ionic/react';
-import { ApiService, YoloEvent, Detection } from '../services/api';
+import { ApiService } from '../services/api';
+import { YoloEvent, Detection } from '../types/interfaces';
 import './DetectionPanel.css';
 
 // Iconos por categoría

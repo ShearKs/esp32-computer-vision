@@ -1,4 +1,7 @@
 // src/services/api.ts
+import { ConfigResponse, StreamReadyResponse, Detection, DetectionResponse, YoloEvent, DetectionsCallback } from '../types/interfaces';
+
+export type { ConfigResponse, StreamReadyResponse, Detection, DetectionResponse, YoloEvent, DetectionsCallback } from '../types/interfaces';
 
 // IP dinámica: usa la del navegador si no es localhost
 const getBaseUrl = () => {
@@ -10,39 +13,6 @@ const getBaseUrl = () => {
 };
 
 const BASE_URL = getBaseUrl();
-
-// Tipos
-export interface ConfigResponse {
-  esp32_url: string;
-  esp32_ip: string;
-  stream_port: number;
-}
-
-export interface StreamReadyResponse {
-  ready: boolean;
-  stream_url: string | null;
-}
-
-export interface Detection {
-  object: string;
-  confidence: number;
-  bbox?: [number, number, number, number];
-  timestamp: number;
-}
-
-export interface DetectionResponse {
-  status: string;
-  detections: Detection[];
-  count: number;
-}
-
-export interface YoloEvent {
-  timestamp: number;
-  detections: Detection[];
-  count: number;
-}
-
-export type DetectionsCallback = (event: YoloEvent) => void;
 
 // Servicio principal
 export const ApiService = {
