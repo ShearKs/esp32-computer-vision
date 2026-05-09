@@ -1,4 +1,4 @@
-
+## Correo electrónico
 
 Me parece unas ideas geniales y sobre todo muy entretenidas. En comparación, la opción de la idea del supermercado si que la veo más compleja y problemática, sobre todo por lo que comentas del acceso a los datos que serían necesarios.
 

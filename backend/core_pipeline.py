@@ -167,44 +167,90 @@ def run_detection_session(stream_url: str, max_frames: int = 5, save_log: bool =
 
 
 # ═══════════════════════════════════════════════════════
-# FRAME GRABBER: hilo dedicado para siempre tener el
-# frame más reciente (elimina lag por buffer de OpenCV)
+# FRAME GRABBER: lee MJPEG via HTTP (urllib) en vez de
+# cv2.VideoCapture que se cuelga con el ESP32-CAM
 # ═══════════════════════════════════════════════════════
 
 class FrameGrabber:
     """
-    Lee frames en un hilo separado para que cap.read() nunca
-    devuelva frames viejos del buffer interno de OpenCV.
+    Lee frames MJPEG via HTTP en un hilo separado.
+    Usa urllib en vez de cv2.VideoCapture porque este último
+    se cuelga indefinidamente con streams ESP32-CAM.
     """
-    def __init__(self, stream_url: str):
-        self.cap = cv2.VideoCapture(stream_url)
-        self.cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
-        self.cap.set(cv2.CAP_PROP_OPEN_TIMEOUT_MSEC, 5000)
-        self.cap.set(cv2.CAP_PROP_READ_TIMEOUT_MSEC, 3000)
+    def __init__(self, stream_url: str, timeout: int = 10):
+        self.stream_url = stream_url
+        self.timeout = timeout
         self._frame = None
         self._ret = False
         self._lock = threading.Lock()
         self._running = False
         self._thread = None
+        self._opened = False
+        self._response = None
+
+        # Intentar abrir la conexión HTTP
+        try:
+            import urllib.request
+            req = urllib.request.Request(stream_url)
+            self._response = urllib.request.urlopen(req, timeout=timeout)
+            self._opened = True
+            print(f"✅ FrameGrabber conectado a {stream_url}")
+        except Exception as e:
+            print(f"❌ FrameGrabber no pudo conectar a {stream_url}: {e}")
+            self._opened = False
 
     @property
     def is_opened(self):
-        return self.cap.isOpened()
+        return self._opened
 
     def start(self):
+        if not self._opened:
+            return self
         self._running = True
         self._thread = threading.Thread(target=self._loop, daemon=True)
         self._thread.start()
         return self
 
     def _loop(self):
-        while self._running:
-            ret, frame = self.cap.read()
-            with self._lock:
-                self._ret = ret
-                self._frame = frame
-            if not ret:
-                time.sleep(0.01)
+        """Lee el stream MJPEG y decodifica cada frame JPEG."""
+        buf = b''
+        while self._running and self._response:
+            try:
+                chunk = self._response.read(4096)
+                if not chunk:
+                    print("⚠️ FrameGrabber: stream cerrado por el servidor")
+                    break
+                buf += chunk
+
+                # Buscar frames JPEG completos (SOI=FFD8, EOI=FFD9)
+                while True:
+                    soi = buf.find(b'\xff\xd8')  # Start of JPEG
+                    eoi = buf.find(b'\xff\xd9', soi + 2 if soi >= 0 else 0)  # End of JPEG
+                    if soi < 0 or eoi < 0:
+                        break
+                    # Extraer el JPEG completo
+                    jpeg_data = buf[soi:eoi + 2]
+                    buf = buf[eoi + 2:]
+
+                    # Decodificar con OpenCV
+                    frame = cv2.imdecode(
+                        np.frombuffer(jpeg_data, dtype=np.uint8),
+                        cv2.IMREAD_COLOR
+                    )
+                    if frame is not None:
+                        with self._lock:
+                            self._ret = True
+                            self._frame = frame
+
+                # Evitar que el buffer crezca sin límite
+                if len(buf) > 500000:
+                    buf = buf[-100000:]
+
+            except Exception as e:
+                print(f"⚠️ FrameGrabber error: {e}")
+                break
+
+        self._running = False
 
     def read(self):
         """Devuelve siempre el frame MÁS RECIENTE."""
@@ -217,7 +263,11 @@ class FrameGrabber:
         self._running = False
         if self._thread:
             self._thread.join(timeout=2)
-        self.cap.release()
+        if self._response:
+            try:
+                self._response.close()
+            except:
+                pass
 
 
 
