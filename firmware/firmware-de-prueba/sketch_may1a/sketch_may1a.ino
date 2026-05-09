@@ -429,9 +429,18 @@ static esp_err_t action_handler(httpd_req_t *req) {
   return ESP_OK;
 }
 
+// Health check handler - para que el backend pueda verificar que el ESP32 está vivo
+static esp_err_t health_handler(httpd_req_t *req) {
+  httpd_resp_set_hdr(req, "Access-Control-Allow-Origin", "*");
+  httpd_resp_set_type(req, "application/json");
+  char resp[] = "{\"status\":\"ok\",\"camera\":true}";
+  return httpd_resp_send(req, resp, strlen(resp));
+}
+
 void startCameraServer() {
   httpd_config_t config = HTTPD_DEFAULT_CONFIG();
   config.server_port = 80;
+  
   httpd_uri_t index_uri = {
     .uri = "/",
     .method = HTTP_GET,
@@ -445,19 +454,40 @@ void startCameraServer() {
     .handler = action_handler,
     .user_ctx = NULL
   };
+
+  httpd_uri_t health_uri = {
+    .uri = "/health",
+    .method = HTTP_GET,
+    .handler = health_handler,
+    .user_ctx = NULL
+  };
+
   httpd_uri_t stream_uri = {
     .uri = "/stream",
     .method = HTTP_GET,
     .handler = stream_handler,
     .user_ctx = NULL
   };
+
+  // Alias /video -> mismo handler que /stream (compatibilidad)
+  httpd_uri_t video_uri = {
+    .uri = "/video",
+    .method = HTTP_GET,
+    .handler = stream_handler,
+    .user_ctx = NULL
+  };
+
   if (httpd_start(&camera_httpd, &config) == ESP_OK) {
     httpd_register_uri_handler(camera_httpd, &index_uri);
     httpd_register_uri_handler(camera_httpd, &cmd_uri);
+    httpd_register_uri_handler(camera_httpd, &health_uri);
+    Serial.println("HTTP server started on port 80 (/, /action, /health)");
   }
   config.server_port += 1;
   config.ctrl_port += 1;
   if (httpd_start(&stream_httpd, &config) == ESP_OK) {
     httpd_register_uri_handler(stream_httpd, &stream_uri);
+    httpd_register_uri_handler(stream_httpd, &video_uri);
+    Serial.println("Stream server started on port 81 (/stream, /video)");
   }
 }

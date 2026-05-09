@@ -185,7 +185,7 @@ export const JoystickControl: React.FC<JoystickControlProps> = ({ onMove, onStop
         <IonCard className="joystick-card">
             <IonCardContent>
                 {/* Indicador de estado */}
-                <div className="joystick-status">
+                {/* <div className="joystick-status">
                     <div className="status-direction">
                         <span className="direction-icon">{directionIcon[direction]}</span>
                         <span className="direction-label">{direction.toUpperCase()}</span>
@@ -196,10 +196,10 @@ export const JoystickControl: React.FC<JoystickControlProps> = ({ onMove, onStop
                         </span>
                         <span className="speed-label">velocidad</span>
                     </div>
-                </div>
+                </div> */}
 
                 {/* Barra de velocidad */}
-                <div className="speed-bar-container">
+                {/* <div className="speed-bar-container">
                     <div
                         className="speed-bar-fill"
                         style={{
@@ -208,7 +208,7 @@ export const JoystickControl: React.FC<JoystickControlProps> = ({ onMove, onStop
                             transition: 'width 0.1s ease, background-color 0.2s ease'
                         }}
                     />
-                </div>
+                </div> */}
 
                 {/* Zona de control: D-pad + Joystick */}
                 <div className="control-zone">
@@ -276,8 +276,9 @@ export const JoystickControl: React.FC<JoystickControlProps> = ({ onMove, onStop
                         onMouseUp={handleDpadUp}
                         onMouseLeave={handleDpadUp}
                         onTouchStart={(e) => { e.preventDefault(); handleDpadDown('right'); }}
-                        onTouchEnd={(e) => { e.preventDefault(); handleDpadUp(); }}
-                    >
+                        onTouchEnd={(e) => { e.preventDefault(); handleDpadUp(); }}>
+
+
                         <svg viewBox="0 0 24 24" fill="currentColor" width="14" height="14">
                             <path d="M8.59 16.59L13.17 12 8.59 7.41 10 6l6 6-6 6z" />
                         </svg>

@@ -1,9 +1,12 @@
 /* src/components/DetectionPanel.css */
 .detection-panel {
-  margin: 12px 0;
-  border-radius: 16px;
+  margin: 0;
+  border-radius: 12px;
   overflow: hidden;
   border: 1px solid rgba(255, 255, 255, 0.1);
+  height: 100%;
+  display: flex;
+  flex-direction: column;
 }
 
 .panel-header {
@@ -28,8 +31,9 @@
 
 .panel-content {
   padding: 12px;
-  max-height: 300px;
+  flex: 1;
   overflow-y: auto;
+  min-height: 0;
 }
 
 /* Sin detecciones */

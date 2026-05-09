@@ -1,8 +1,9 @@
 // src/pages/HomePage.tsx
 import { useState, useEffect } from 'react';
+import { Capacitor } from '@capacitor/core';
 import { 
   IonContent, IonHeader, IonPage, IonTitle, IonToolbar, 
-  IonSpinner, IonMenuButton, IonButtons
+  IonSpinner, IonMenuButton, IonButtons, IonButton
 } from '@ionic/react';
 import { VideoStream } from '../components/VideoStream';
 import { JoystickControl } from '../components/JoystickControl';
@@ -14,36 +15,85 @@ import './HomePage.css';
 
 const Home: React.FC = () => {
   const handleMove = (direction: string, speed: number, x: number, y: number) => {
-    console.log(`🚗 Mover: ${direction} | Velocidad: ${speed}% | x:${x.toFixed(2)} y:${y.toFixed(2)}`);
+    console.log(`🚗 Mover: ${direction} | Velocidad: ${speed}%`);
   };
 
-  const handleStop = () => {
-    console.log('🛑 Stop');
-  };
+  const handleStop = () => console.log('🛑 Stop');
 
   const [ready, setReady] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [statusMsg, setStatusMsg] = useState('Conectando con el servidor...');
   const [streamKey, setStreamKey] = useState(0);
-
+  const [retryKey, setRetryKey] = useState(0);
   const { yoloEnabled } = useSettings();
 
-  useEffect(() => {
-    setStreamKey(prev => prev + 1);
-  }, [yoloEnabled]);
+  const handleRetry = () => {
+    setReady(false);
+    setError(null);
+    setStatusMsg('Reconectando...');
+    setRetryKey(prev => prev + 1);
+  };
+
+  useEffect(() => { setStreamKey(prev => prev + 1); }, [yoloEnabled]);
 
   useEffect(() => {
+    let cancelled = false;
+
     const init = async () => {
-      try {
-        await ApiService.waitForStream(30, 1000);
-        setReady(true);
-      } catch (err: any) {
-        console.error("Error inicializando stream:", err);
-        setError("No se pudo conectar con la cámara del robot");
+      const isNative = Capacitor.isNativePlatform();
+      console.log(`🔌 [Init] Plataforma nativa: ${isNative}`);
+      console.log(`🔌 [Init] Base URL inicial: ${ApiService.getBaseUrl()}`);
+
+      if (isNative) {
+        console.log('🔍 [Init] Escaneando red...');
+        setStatusMsg('Escaneando redes...');
+        const found = await ApiService.scanNetwork();
+        console.log(`🔍 [Init] Scan resultado: ${found ? '✅ Encontrado' : '❌ No encontrado'}`);
+        console.log(`🔍 [Init] Base URL tras scan: ${ApiService.getBaseUrl()}`);
+
+        if (!found) {
+          if (!cancelled) setError(`No se encontró el backend en ninguna red conocida. Configura la IP en la pestaña "Red".`);
+          return;
+        }
       }
+
+      // Esperar a que el backend esté accesible antes de montar los streams
+      const MAX_RETRIES = 30;
+      for (let i = 0; i < MAX_RETRIES; i++) {
+        if (cancelled) return;
+        setStatusMsg(`Esperando al backend... (${i + 1}/${MAX_RETRIES})`);
+        try {
+          const ok = await ApiService.healthCheck();
+          if (ok) {
+            console.log('✅ [Init] Backend accesible');
+            break;
+          }
+        } catch { /* reintentar */ }
+
+        if (i === MAX_RETRIES - 1) {
+          if (!cancelled) setError('No se pudo conectar al backend. Verifica que el servidor esté corriendo.');
+          return;
+        }
+        await new Promise(r => setTimeout(r, 1500));
+      }
+
+      if (cancelled) return;
+
+      // Ahora esperar a que la cámara esté lista
+      setStatusMsg('Conectando con la cámara...');
+      try {
+        await ApiService.waitForStream(20, 1500);
+        console.log('✅ [Init] Stream listo');
+      } catch {
+        console.warn('⚠️ [Init] Stream no disponible, mostrando UI igualmente');
+      }
+
+      if (!cancelled) setReady(true);
     };
 
     init();
-  }, []);
+    return () => { cancelled = true; };
+  }, [retryKey]);
 
   return (
     <IonPage>
@@ -59,35 +109,50 @@ const Home: React.FC = () => {
       <IonContent fullscreen className="ion-padding">
         <div className="home-layout">
 
-          {!ready && !error && (
-            <div className="placeholder-box">
-              <IonSpinner name="crescent" />
-              <p>🔄 Conectando con el robot...</p>
-              <small>Esperando que la cámara esté lista</small>
-            </div>
-          )}
-
-          {error && (
-            <div className="placeholder-box">
-              <p style={{ color: 'red' }}>❌ {error}</p>
-              <small>Verifica que el ESP32 está encendido y en la misma WiFi</small>
-            </div>
-          )}
-
-          {ready && (
-            <>
-              {yoloEnabled ? (
-                <>
-                  <DetectionStream key={`yolo-${streamKey}`} />
-                  <DetectionPanel active={yoloEnabled} />
-                </>
+          {/* ═══════════════════════════════════════════════════ */}
+          {/* FILA 1: CÁMARA (o estado de conexión) */}
+          {/* ═══════════════════════════════════════════════════ */}
+          <div className="home-camera-row">
+            {!ready && !error && (
+              <div className="placeholder-box">
+                <IonSpinner name="crescent" />
+                <p>🔄 {statusMsg}</p>
+              </div>
+            )}
+            {error && (
+              <div className="placeholder-box placeholder-error">
+                <p>❌ {error}</p>
+                <IonButton fill="outline" size="small" onClick={handleRetry} style={{ marginTop: 8 }}>
+                  🔄 Reintentar conexión
+                </IonButton>
+              </div>
+            )}
+            {ready && (
+              yoloEnabled ? (
+                <DetectionStream key={`yolo-${streamKey}`} />
               ) : (
                 <VideoStream key={`raw-${streamKey}`} />
-              )}
-            </>
-          )}
+              )
+            )}
+          </div>
 
-          <JoystickControl onMove={handleMove} onStop={handleStop} />
+          {/* ═══════════════════════════════════════════════════ */}
+          {/* FILA 2: DETECCIONES (izq) + JOYSTICK (der)        */}
+          {/* Siempre visible, incluso mientras se conecta       */}
+          {/* ═══════════════════════════════════════════════════ */}
+          <div className="home-content">
+            
+            {/* Columna izquierda: Panel de detecciones */}
+            <div className="controls-detections">
+              {yoloEnabled && <DetectionPanel active={ready} />}
+            </div>
+
+            {/* Columna derecha: Joystick */}
+            <div className="controls-joystick">
+              <JoystickControl onMove={handleMove} onStop={handleStop} />
+            </div>
+
+          </div>
 
         </div>
       </IonContent>

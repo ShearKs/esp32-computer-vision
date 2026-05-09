@@ -4,10 +4,23 @@ export interface VideoStreamProps {
   onConnectionChange?: (connected: boolean) => void;
 }
 
+export interface NetworkProfile {
+  name: string;
+  backend_ip: string;
+  esp32_ip: string;
+}
+
 export interface ConfigResponse {
   esp32_url: string;
   esp32_ip: string;
   stream_port: number;
+  backend_ip: string;
+  active_profile: string;
+}
+
+export interface ProfilesResponse {
+  active_profile: string;
+  profiles: Record<string, NetworkProfile>;
 }
 
 export interface StreamReadyResponse {

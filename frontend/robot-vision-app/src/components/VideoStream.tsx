@@ -6,71 +6,38 @@ import { ApiService } from '../services/api';
 import './VideoStream.css';
 
 export const VideoStream: React.FC = () => {
-  const [streamUrl, setStreamUrl] = useState<string | null>(null);
   const [status, setStatus] = useState<'loading' | 'connected' | 'error'>('loading');
   const [retryCount, setRetryCount] = useState(0);
-  const [currentUrl, setCurrentUrl] = useState<string | null>(null);
+
+  // Usar el proxy del backend en vez de conectar directamente al ESP32.
+  // Esto evita problemas de CORS y funciona en Android nativo.
+  const rawStreamUrl = `${ApiService.getBaseUrl()}/api/stream/raw`;
+  const [currentUrl, setCurrentUrl] = useState(rawStreamUrl);
 
   useEffect(() => {
-    let cancelled = false;
+    setCurrentUrl(rawStreamUrl);
     setStatus('loading');
     setRetryCount(0);
-
-    ApiService.getEsp32StreamUrl()
-      .then((url) => {
-        if (!cancelled) {
-          setStreamUrl(url);
-          setCurrentUrl(url);
-        }
-      })
-      .catch(() => {
-        if (!cancelled) setStatus('error');
-      });
-
-    return () => { cancelled = true; };
-  }, []);
-
-  useEffect(() => {
-    if (streamUrl) {
-      setCurrentUrl(streamUrl);
-      setStatus('loading');
-      setRetryCount(0);
-    }
-  }, [streamUrl]);
+  }, [rawStreamUrl]);
 
   const handleLoad = () => setStatus('connected');
 
   const handleError = () => {
-    if (retryCount < 3 && currentUrl) {
-      setRetryCount(prev => prev + 1);
-      setCurrentUrl(`${currentUrl}?retry=${Date.now()}`);
+    if (retryCount < 10) {
+      setTimeout(() => {
+        setRetryCount(prev => prev + 1);
+        setCurrentUrl(`${rawStreamUrl}?_retry=${Date.now()}`);
+      }, 2000);
     } else {
       setStatus('error');
     }
   };
 
   const handleRetry = () => {
-    if (!streamUrl) return;
     setRetryCount(0);
-    setCurrentUrl(`${streamUrl}?retry=${Date.now()}`);
+    setCurrentUrl(`${rawStreamUrl}?_retry=${Date.now()}`);
     setStatus('loading');
   };
-
-  if (!currentUrl) {
-    return (
-      <IonCard className="video-card">
-        <div className="video-header">
-          <span className="video-title">📹 Stream en Vivo</span>
-        </div>
-        <div className="video-container">
-          <div className="overlay loading-overlay">
-            <IonSpinner name="crescent" />
-            <p>Obteniendo configuración...</p>
-          </div>
-        </div>
-      </IonCard>
-    );
-  }
 
   return (
     <IonCard className="video-card">
@@ -83,7 +50,7 @@ export const VideoStream: React.FC = () => {
         {status === 'loading' && (
           <div className="overlay loading-overlay">
             <IonSpinner name="crescent" />
-            <p>{retryCount > 0 ? `Reintentando... (${retryCount}/3)` : 'Conectando...'}</p>
+            <p>{retryCount > 0 ? `Reintentando... (${retryCount}/10)` : 'Conectando...'}</p>
           </div>
         )}
 
@@ -91,7 +58,7 @@ export const VideoStream: React.FC = () => {
           <div className="overlay error-overlay">
             <IonIcon icon={alertCircleOutline} className="error-icon" />
             <p>Error de conexión</p>
-            <small>Verifica la IP y que el ESP32 esté encendido</small>
+            <small>Verifica la IP y que la cámara esté encendida</small>
             <IonIcon 
               icon={refresh} 
               onClick={handleRetry}
@@ -102,7 +69,7 @@ export const VideoStream: React.FC = () => {
 
         <img
           src={currentUrl}
-          alt="ESP32 Stream"
+          alt="Camera Stream"
           className="stream-img"
           onLoad={handleLoad}
           onError={handleError}

@@ -1,48 +1,55 @@
-# backend/config.py
+import json
+import os
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
-NETWORK_PROFILES = {
-    "casa": {
-        # Sergio_router5G
-        "esp32_ip": "192.168.1.132",
-        "esp32_stream_port": 8080,
-        "esp32_stream_path": "/video"
-    },
-    "instituto": {
-        "esp32_ip": "192.168.48.86",
-        "esp32_stream_port": 8080,
-        "esp32_stream_path": "/video"
-    },
-    "pruebas_movil": {
-        "esp32_ip": "192.168.0.50",
-        "esp32_stream_port": 8080,
-        "esp32_stream_path": "/video"
-    }
-}
+DATA_DIR = os.path.join(os.path.dirname(__file__), "data")
+PROFILES_FILE = os.path.join(DATA_DIR, "profiles.json")
+ACTIVE_CONFIG_FILE = os.path.join(DATA_DIR, "active_config.json")
 
-ACTIVE_PROFILE = "casa"
+def load_profiles():
+    with open(PROFILES_FILE, "r") as f:
+        return json.load(f)
+
+def save_profiles(profiles):
+    with open(PROFILES_FILE, "w") as f:
+        json.dump(profiles, f, indent=2)
+
+def load_active_config():
+    try:
+        with open(ACTIVE_CONFIG_FILE, "r") as f:
+            return json.load(f)
+    except (FileNotFoundError, json.JSONDecodeError):
+        return None
+
+def save_active_config(config):
+    with open(ACTIVE_CONFIG_FILE, "w") as f:
+        json.dump(config, f, indent=2)
+
+NETWORK_PROFILES = load_profiles()
+
+_active = load_active_config()
+if _active and _active.get("active_profile") in NETWORK_PROFILES:
+    ACTIVE_PROFILE = _active["active_profile"]
+else:
+    ACTIVE_PROFILE = "casa"
 
 class Settings(BaseSettings):
-    # Configuración del ESP32
+    backend_ip: str = NETWORK_PROFILES[ACTIVE_PROFILE]["backend_ip"]
     esp32_ip: str = NETWORK_PROFILES[ACTIVE_PROFILE]["esp32_ip"]
     esp32_stream_port: int = NETWORK_PROFILES[ACTIVE_PROFILE]["esp32_stream_port"]
     esp32_stream_path: str = NETWORK_PROFILES[ACTIVE_PROFILE]["esp32_stream_path"]
-    
-    # Configuración de la API
+
     api_host: str = "0.0.0.0"
     api_port: int = 8000
-    
+
     model_config = SettingsConfigDict(
-        # No usamos el archivo .env ya que quiero tener varias ips
-        #env_file=".env",
-        env_file= None,
+        env_file=None,
         env_file_encoding="utf-8",
         case_sensitive=False
     )
 
-# Instancia única (singleton)
 settings = Settings()
 
-# Para debug
+# Para debugging y esas cosas raras
 print(f"Perfil activo: {ACTIVE_PROFILE}")
 print(f"IP del ESP32: {settings.esp32_ip}")
