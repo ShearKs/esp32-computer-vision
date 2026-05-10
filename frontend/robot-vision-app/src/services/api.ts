@@ -1,8 +1,10 @@
 // src/services/api.ts
 import { Capacitor } from '@capacitor/core';
-import { ConfigResponse, StreamReadyResponse, Detection, DetectionResponse, YoloEvent, DetectionsCallback, NetworkProfile, ProfilesResponse } from '../types/interfaces';
+import { ConfigResponse, StreamReadyResponse, Detection, DetectionResponse, YoloEvent,
+  DetectionsCallback, NetworkProfile, ProfilesResponse } from '../types/interfaces';
 
-export type { ConfigResponse, StreamReadyResponse, Detection, DetectionResponse, YoloEvent, DetectionsCallback, NetworkProfile, ProfilesResponse } from '../types/interfaces';
+export type { ConfigResponse, StreamReadyResponse, Detection, DetectionResponse, YoloEvent,
+  DetectionsCallback, NetworkProfile, ProfilesResponse } from '../types/interfaces';
 
 const BACKEND_PORT = 8000;
 const STORAGE_KEY = 'robot_backend_ip';
@@ -25,7 +27,7 @@ const KNOWN_PROFILES: NetworkProfile[] = [
 let _baseUrl = 'http://localhost:8000';
 
 const hostname = window.location.hostname;
-const isNative = Capacitor.isNativePlatform(); // ✅ Funciona con Capacitor 5+ (https://localhost)
+const isNative = Capacitor.isNativePlatform(); // Funciona con Capacitor 5+ (https://localhost)
 
 if (isNative) {
   // En Android/iOS nativo: usar IP guardada o la de .env
@@ -40,37 +42,46 @@ if (isNative) {
   _baseUrl = `http://${hostname}:${BACKEND_PORT}`;
 }
 
+// Intenta hacer fetch a /health para verificar si el backend responde en la URL dada. Timeout rápido para no bloquear la app.
 function tryFetch(url: string, timeoutMs = 3000): Promise<boolean> {
+  // Usar AbortController para implementar timeout
+  // AbortController es una interfaz de javascript que se utiliza para cancelar peticiones asincronas que están en curso
+  // como fetch(), XMLHttpRequest o setTimeout().
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
+
+  // Cualquier respuesta HTTP (incluso 405/500) significa que el servidor ESTÁ ahí
   return fetch(`${url}/health`, { signal: controller.signal, method: 'GET' })
     .then(r => {
       clearTimeout(timer);
       // Cualquier respuesta HTTP (incluso 405/500) significa que el servidor ESTÁ ahí
-      console.log(`✅ [tryFetch] ${url} → status:${r.status}`);
+      console.log(`[tryFetch] ${url} → status:${r.status}`);
       return true;
     })
+    // Si fetch falla (timeout, no responde, CORS, etc), asumimos que el backend NO está ahí. No es un error crítico, solo significa que esa URL no funciona.
     .catch((err) => { clearTimeout(timer); console.log(`❌ [tryFetch] ${url} → ${err.message}`); return false; });
 }
 
 /** Auto-inicialización: si estamos en nativo y la URL actual no responde, escanear red */
 let _initPromise: Promise<void> | null = null;
+
+// En nativo, si la URL actual no responde, escanea los perfiles conocidos para encontrar el backend. En web, asume localhost (no escanea).
 function autoInit(): Promise<void> {
   if (_initPromise) return _initPromise;
   _initPromise = (async () => {
     if (!isNative) return; // En web localhost siempre funciona
-    console.log('🚀 [autoInit] Verificando conexión con:', _baseUrl);
+    console.log('[autoInit] Verificando conexión con:', _baseUrl);
     const ok = await tryFetch(_baseUrl, 3000);
     if (ok) {
-      console.log('✅ [autoInit] Backend accesible en:', _baseUrl);
+      console.log('[autoInit] Backend accesible en:', _baseUrl);
       return;
     }
-    console.warn('⚠️ [autoInit] Backend NO accesible en', _baseUrl, '→ escaneando red...');
+    console.warn('[autoInit] Backend NO accesible en', _baseUrl, '→ escaneando red...');
     const found = await ApiService.scanNetwork();
     if (found) {
-      console.log('✅ [autoInit] Backend encontrado tras escaneo:', _baseUrl);
+      console.log('[autoInit] Backend encontrado tras escaneo:', _baseUrl);
     } else {
-      console.error('❌ [autoInit] No se encontró backend en ningún perfil');
+      console.error('[autoInit] No se encontró backend en ningún perfil');
     }
   })();
   return _initPromise;
@@ -78,6 +89,7 @@ function autoInit(): Promise<void> {
 
 // ─── ApiService ──────────────────────────────────────────────────────
 
+// Servicio centralizado para interactuar con el backend. Maneja descubrimiento de URL, perfiles, y endpoints específicos.
 export const ApiService = {
   getBaseUrl: () => _baseUrl,
 

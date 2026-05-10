@@ -56,7 +56,7 @@ def _check_esp32_reachable():
         req = urllib.request.Request(root_url, method='GET')
         with urllib.request.urlopen(req, timeout=3) as resp:
             if resp.status == 200:
-                print(f"✅ ESP32 accesible en {root_url}")
+                print(f"ESP32 accesible en {root_url}")
                 return True
     except Exception:
         pass
@@ -69,10 +69,10 @@ def _check_esp32_reachable():
             # Leer solo unos pocos bytes para verificar que responde
             data = resp.read(256)
             if len(data) > 0:
-                print(f"✅ Stream accesible en {stream_url} ({len(data)} bytes)")
+                print(f"Stream accesible en {stream_url} ({len(data)} bytes)")
                 return True
     except Exception as e:
-        print(f"⚠️ ESP32/Cámara no accesible: {root_url} / {stream_url}: {e}")
+        print(f"ESP32/Cámara no accesible: {root_url} / {stream_url}: {e}")
 
     return False
 
@@ -93,6 +93,7 @@ async def health_check():
 # CONFIGURACIÓN
 # ═══════════════════════════════════════════════════════
 
+# Muestra la configuración actual, incluyendo el perfil activo y la URL del stream
 @app.get("/api/config")
 async def get_config():
     return {
@@ -103,6 +104,7 @@ async def get_config():
         "active_profile": _current_profile
     }
 
+# Devuelve la lista de perfiles guardados, con detalles para cada uno. El frontend puede usar esto para mostrar opciones al usuario.
 @app.get("/api/profiles")
 async def get_profiles():
     profiles = load_profiles()

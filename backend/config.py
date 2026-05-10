@@ -52,4 +52,4 @@ settings = Settings()
 
 # Para debugging y esas cosas raras
 print(f"Perfil activo: {ACTIVE_PROFILE}")
-print(f"IP del ESP32: {settings.esp32_ip}")
+# print(f"IP del ESP32: {settings.esp32_ip}")
