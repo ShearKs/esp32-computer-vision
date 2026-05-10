@@ -15,10 +15,10 @@ import {
 import './Tab2.css';
 
 const Tab2: React.FC = () => {
-  // Perfiles: primero intenta desde backend, fallback a locales
+  // Perfiles: se obtienen del backend (fuente única de verdad)
   const [backendProfiles, setBackendProfiles] = useState<Record<string, { backend_ip: string; esp32_ip: string }>>({});
-  const localProfiles = ApiService.getKnownProfiles();
   const [activeProfile, setActiveProfile] = useState<string | null>(ApiService.getConnectedProfile());
+  const [serverIp, setServerIp] = useState<string | null>(null);
   const [manualIp, setManualIp] = useState('');
   const [connecting, setConnecting] = useState(false);
   const [status, setStatus] = useState<{ ok: boolean; msg: string } | null>(null);
@@ -39,18 +39,12 @@ const Tab2: React.FC = () => {
   const [diagLogs, setDiagLogs] = useState<string[]>([]);
   const [diagRunning, setDiagRunning] = useState(false);
 
-  // Obtener lista visible de perfiles (backend > hardcoded)
-  const displayProfiles: NetworkProfile[] = (() => {
-    const keys = Object.keys(backendProfiles);
-    if (keys.length > 0) {
-      return keys.map(name => ({
-        name,
-        backend_ip: backendProfiles[name].backend_ip,
-        esp32_ip: backendProfiles[name].esp32_ip
-      }));
-    }
-    return localProfiles;
-  })();
+  // Obtener lista visible de perfiles (solo del backend)
+  const displayProfiles: NetworkProfile[] = Object.keys(backendProfiles).map(name => ({
+    name,
+    backend_ip: backendProfiles[name].backend_ip,
+    esp32_ip: backendProfiles[name].esp32_ip
+  }));
 
   const loadBackendData = async () => {
     try {
@@ -64,6 +58,12 @@ const Tab2: React.FC = () => {
       if (Object.keys(profiles).length > 0) {
         setBackendProfiles(profiles);
       }
+
+      // Obtener IP real del servidor
+      try {
+        const info = await fetch(`${ApiService.getBaseUrl()}/api/server-info`).then(r => r.json());
+        setServerIp(info.server_ip);
+      } catch { /* no pasa nada */ }
     } catch {}
   };
 
@@ -195,18 +195,23 @@ const Tab2: React.FC = () => {
       log(`❌ config → ${err.message}`);
     }
 
-    log('--- Test 4: Scan Network ---');
-    const profiles = ApiService.getKnownProfiles();
-    for (const p of profiles) {
-      try {
-        const res = await fetch(`http://${p.backend_ip}:8000/health`, {
-          method: 'GET',
-          signal: AbortSignal.timeout(2000)
-        });
-        log(`${res.ok ? '✅' : '⚠️'} ${p.name} (${p.backend_ip}) → ${res.status}`);
-      } catch (err: any) {
-        log(`❌ ${p.name} (${p.backend_ip}) → ${err.message}`);
+    log('--- Test 4: Server Info ---');
+    try {
+      const info = await fetch(`${baseUrl}/api/server-info`).then(r => r.json());
+      log(`✅ server-info → IP: ${info.server_ip}, Perfil: ${info.active_profile}`);
+      log(`   ESP32 URL: ${info.esp32_url}`);
+    } catch (err: any) {
+      log(`❌ server-info → ${err.message}`);
+    }
+
+    log('--- Test 5: Perfiles del Backend ---');
+    try {
+      const profiles = await ApiService.fetchBackendProfiles();
+      for (const [name, p] of Object.entries(profiles)) {
+        log(`   📋 ${name}: backend=${p.backend_ip}, esp32=${p.esp32_ip}`);
       }
+    } catch (err: any) {
+      log(`❌ profiles → ${err.message}`);
     }
 
     log('--- Diagnóstico completado ---');
@@ -234,6 +239,13 @@ const Tab2: React.FC = () => {
           <IonChip className="backend-url-chip" color="medium">
             <IonIcon icon={wifi} />
             <IonLabel>{backendUrl}</IonLabel>
+          </IonChip>
+        )}
+
+        {serverIp && (
+          <IonChip color="success" style={{ marginTop: 4 }}>
+            <IonIcon icon={wifi} />
+            <IonLabel>IP del servidor: {serverIp}</IonLabel>
           </IonChip>
         )}
 

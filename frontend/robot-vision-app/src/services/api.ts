@@ -10,24 +10,12 @@ const BACKEND_PORT = 8000;
 const STORAGE_KEY = 'robot_backend_ip';
 const STORAGE_PROFILE_KEY = 'robot_active_profile';
 
-// Perfiles de red para escaneo inicial (bootstrap)
-// La fuente única de verdad está en backend/data/profiles.json.
-// Una vez conectado, el frontend obtiene los perfiles desde el backend.
-const KNOWN_PROFILES: NetworkProfile[] = [
-  { name: 'casa',        backend_ip: '192.168.1.174',   esp32_ip: '192.168.1.162' },
-  { name: 'casa-cable',  backend_ip: '192.168.1.174',   esp32_ip: '192.168.1.173' },
-  { name: 'instituto',   backend_ip: '192.168.48.207',  esp32_ip: '192.168.48.86' },
-  { name: 'pruebas_movil', backend_ip: '192.168.0.50',  esp32_ip: '192.168.0.50' },
-  { name: 'ipwebcam',    backend_ip: '192.168.1.174',   esp32_ip: '192.168.1.XXX' },
-  { name: 'wsl-actual',  backend_ip: '192.168.192.207', esp32_ip: '192.168.192.132' },
-];
-
 // ─── Descubrimiento del backend ──────────────────────────────────────
 
 let _baseUrl = 'http://localhost:8000';
 
 const hostname = window.location.hostname;
-const isNative = Capacitor.isNativePlatform(); // Funciona con Capacitor 5+ (https://localhost)
+const isNative = Capacitor.isNativePlatform();
 
 if (isNative) {
   // En Android/iOS nativo: usar IP guardada o la de .env
@@ -44,28 +32,52 @@ if (isNative) {
 
 // Intenta hacer fetch a /health para verificar si el backend responde en la URL dada. Timeout rápido para no bloquear la app.
 function tryFetch(url: string, timeoutMs = 3000): Promise<boolean> {
-  // Usar AbortController para implementar timeout
-  // AbortController es una interfaz de javascript que se utiliza para cancelar peticiones asincronas que están en curso
-  // como fetch(), XMLHttpRequest o setTimeout().
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
 
-  // Cualquier respuesta HTTP (incluso 405/500) significa que el servidor ESTÁ ahí
   return fetch(`${url}/health`, { signal: controller.signal, method: 'GET' })
     .then(r => {
       clearTimeout(timer);
-      // Cualquier respuesta HTTP (incluso 405/500) significa que el servidor ESTÁ ahí
       console.log(`[tryFetch] ${url} → status:${r.status}`);
       return true;
     })
-    // Si fetch falla (timeout, no responde, CORS, etc), asumimos que el backend NO está ahí. No es un error crítico, solo significa que esa URL no funciona.
     .catch((err) => { clearTimeout(timer); console.log(`❌ [tryFetch] ${url} → ${err.message}`); return false; });
+}
+
+/**
+ * Escaneo inteligente de subred: dado un prefijo de subred (ej "192.168.1"),
+ * prueba un rango de IPs comunes en paralelo buscando el backend.
+ * Devuelve la IP encontrada o null.
+ */
+async function scanSubnet(subnet: string, timeoutMs = 2000): Promise<string | null> {
+  // Rango de IPs típicas para equipos en red doméstica
+  const candidates: number[] = [];
+  // Primero las más comunes (100-200), luego el resto
+  for (let i = 100; i <= 200; i++) candidates.push(i);
+  for (let i = 2; i < 100; i++) candidates.push(i);
+  for (let i = 201; i <= 254; i++) candidates.push(i);
+
+  // Escanear en bloques de 30 para no saturar la red
+  const BATCH_SIZE = 30;
+  for (let batch = 0; batch < candidates.length; batch += BATCH_SIZE) {
+    const slice = candidates.slice(batch, batch + BATCH_SIZE);
+    const results = await Promise.all(
+      slice.map(async (host) => {
+        const ip = `${subnet}.${host}`;
+        const url = `http://${ip}:${BACKEND_PORT}`;
+        const ok = await tryFetch(url, timeoutMs);
+        return { ip, ok };
+      })
+    );
+    const found = results.find(r => r.ok);
+    if (found) return found.ip;
+  }
+  return null;
 }
 
 /** Auto-inicialización: si estamos en nativo y la URL actual no responde, escanear red */
 let _initPromise: Promise<void> | null = null;
 
-// En nativo, si la URL actual no responde, escanea los perfiles conocidos para encontrar el backend. En web, asume localhost (no escanea).
 function autoInit(): Promise<void> {
   if (_initPromise) return _initPromise;
   _initPromise = (async () => {
@@ -81,7 +93,7 @@ function autoInit(): Promise<void> {
     if (found) {
       console.log('[autoInit] Backend encontrado tras escaneo:', _baseUrl);
     } else {
-      console.error('[autoInit] No se encontró backend en ningún perfil');
+      console.error('[autoInit] No se encontró backend en ninguna red conocida');
     }
   })();
   return _initPromise;
@@ -89,55 +101,65 @@ function autoInit(): Promise<void> {
 
 // ─── ApiService ──────────────────────────────────────────────────────
 
-// Servicio centralizado para interactuar con el backend. Maneja descubrimiento de URL, perfiles, y endpoints específicos.
 export const ApiService = {
   getBaseUrl: () => _baseUrl,
 
   /** Inicialización automática: verifica conexión y escanea si es necesario (solo nativo) */
   autoInit,
 
-  getKnownProfiles: () => KNOWN_PROFILES,
-
-  /** Busca el backend entre todos los perfiles conocidos (escaneo en paralelo). */
+  /**
+   * Busca el backend en la red.
+   * 1. Primero intenta obtener perfiles del backend ya conectado.
+   * 2. Luego prueba perfiles conocidos (hardcoded como fallback).
+   * 3. Si nada funciona, escanea la subred completa.
+   */
   async scanNetwork(): Promise<boolean> {
-    console.log('🔍 [scanNetwork] Probando perfiles en paralelo:', KNOWN_PROFILES.map(p => p.name).join(', '));
+    // Paso 1: Intentar perfiles hardcoded (fallback mínimo para bootstrap)
+    const fallbackIPs = [
+      '192.168.1.173', '192.168.1.174',   // casa WiFi/cable
+      '192.168.48.207',                     // instituto
+      '192.168.0.50',                       // pruebas_movil
+    ];
 
-    // Lanzar todas las peticiones en paralelo (mucho más rápido)
+    console.log('🔍 [scanNetwork] Probando IPs conocidas...');
     const results = await Promise.all(
-      KNOWN_PROFILES.map(async (p) => {
-        const url = `http://${p.backend_ip}:${BACKEND_PORT}`;
-        console.log(`🔍 [scanNetwork] Probando "${p.name}" → ${url}`);
-        const ok = await tryFetch(url, 3000);
-        return { profile: p, url, ok };
+      fallbackIPs.map(async (ip) => {
+        const url = `http://${ip}:${BACKEND_PORT}`;
+        const ok = await tryFetch(url, 2500);
+        return { ip, url, ok };
       })
     );
 
-    // Usar el primer perfil que respondió
     const found = results.find(r => r.ok);
     if (found) {
       _baseUrl = found.url;
-      localStorage.setItem(STORAGE_KEY, found.profile.backend_ip);
-      localStorage.setItem(STORAGE_PROFILE_KEY, found.profile.name);
-      console.log(`✅ [scanNetwork] Conectado a "${found.profile.name}" → ${found.url}`);
+      localStorage.setItem(STORAGE_KEY, found.ip);
+      console.log(`[scanNetwork] Encontrado en IP conocida: ${found.ip}`);
+      // Ahora pedir al servidor su IP real (puede ser diferente si hay NAT)
+      try {
+        const info = await fetch(`${_baseUrl}/api/server-info`).then(r => r.json());
+        if (info.server_ip && info.server_ip !== found.ip) {
+          console.log(`📌 [scanNetwork] Servidor reporta IP real: ${info.server_ip}`);
+        }
+      } catch { /* no pasa nada */ }
       return true;
     }
 
-    console.warn('❌ [scanNetwork] Ningún perfil respondió');
-    return false;
-  },
-
-  /** Conecta a un perfil específico por nombre. */
-  async connectToProfile(profileName: string): Promise<boolean> {
-    const profile = KNOWN_PROFILES.find(p => p.name === profileName);
-    if (!profile) return false;
-    const url = `http://${profile.backend_ip}:${BACKEND_PORT}`;
-    const ok = await tryFetch(url);
-    if (ok) {
-      _baseUrl = url;
-      localStorage.setItem(STORAGE_KEY, profile.backend_ip);
-      localStorage.setItem(STORAGE_PROFILE_KEY, profile.name);
+    // Paso 2: Escanear subredes comunes completas
+    const subnets = ['192.168.1', '192.168.0', '192.168.48'];
+    for (const subnet of subnets) {
+      console.log(`🔍 [scanNetwork] Escaneando subred ${subnet}.x ...`);
+      const ip = await scanSubnet(subnet, 1500);
+      if (ip) {
+        _baseUrl = `http://${ip}:${BACKEND_PORT}`;
+        localStorage.setItem(STORAGE_KEY, ip);
+        console.log(`[scanNetwork] Backend encontrado en ${ip}`);
+        return true;
+      }
     }
-    return ok;
+
+    console.warn('[scanNetwork] Ninguna IP respondió');
+    return false;
   },
 
   /** Conecta a una IP manual. */
@@ -151,6 +173,18 @@ export const ApiService = {
     return ok;
   },
 
+  /** Conecta a un perfil por nombre (usa los perfiles del backend). */
+  async connectToProfile(profileName: string): Promise<boolean> {
+    try {
+      const profiles = await ApiService.fetchBackendProfiles();
+      const profile = profiles[profileName];
+      if (!profile) return false;
+      return await ApiService.connectToIp(profile.backend_ip);
+    } catch {
+      return false;
+    }
+  },
+
   /** Cambia el perfil activo en el backend */
   async setProfile(profile: string): Promise<boolean> {
     try {
@@ -162,7 +196,7 @@ export const ApiService = {
   },
 
   /** Configura IP manual de la cámara ESP32 en el backend */
-  async setEsp32Ip(ip: string, port = 8080, path = '/video'): Promise<boolean> {
+  async setEsp32Ip(ip: string, port = 81, path = '/stream'): Promise<boolean> {
     try {
       const res = await fetch(`${_baseUrl}/api/config/esp32?ip=${ip}&port=${port}&path=${encodeURIComponent(path)}`, { method: 'POST' });
       return res.ok;

@@ -1,19 +1,22 @@
 <?xml version="1.0" encoding="utf-8"?>
 <network-security-config>
-    <!-- Permitir tráfico cleartext (HTTP) a IPs de red local -->
+    <!-- Permitir tráfico cleartext (HTTP) a CUALQUIER IP de red privada.
+         Así no importa si la IP del backend cambia. -->
     <base-config cleartextTrafficPermitted="true">
         <trust-anchors>
             <certificates src="system" />
         </trust-anchors>
     </base-config>
 
-    <!-- Dominios específicos de red local -->
+    <!-- Redes privadas habituales: 192.168.x.x, 10.x.x.x, 172.16-31.x.x -->
     <domain-config cleartextTrafficPermitted="true">
-        <domain includeSubdomains="true">192.168.1.174</domain>
-        <domain includeSubdomains="true">192.168.1.207</domain>
-        <domain includeSubdomains="true">192.168.48.207</domain>
-        <domain includeSubdomains="true">192.168.0.50</domain>
-        <domain includeSubdomains="true">192.168.192.207</domain>
+        <!-- Cualquier 192.168.x.x -->
+        <domain includeSubdomains="true">192.168.0.0</domain>
+        <domain includeSubdomains="true">192.168.1.0</domain>
+        <domain includeSubdomains="true">192.168.48.0</domain>
+        <!-- Rangos genéricos para futuras redes -->
+        <domain includeSubdomains="true">10.0.0.0</domain>
+        <domain includeSubdomains="true">172.16.0.0</domain>
         <domain includeSubdomains="true">localhost</domain>
     </domain-config>
 </network-security-config>
