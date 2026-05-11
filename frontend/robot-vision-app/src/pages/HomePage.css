@@ -15,7 +15,7 @@
 /* FILA 1: CÁMARA — ~60% de la altura                 */
 /* ═══════════════════════════════════════════════════ */
 .home-camera-row {
-  flex: 6;
+  flex: 5;
   min-height: 0;
   overflow: hidden;
   border-radius: 12px;
@@ -49,7 +49,7 @@
 /* Siempre en fila, nunca apilados                     */
 /* ═══════════════════════════════════════════════════ */
  .home-content {
-  flex: 4;
+  flex: 5;
   display: flex;
   flex-direction: row;
   gap: 8px;
@@ -70,7 +70,6 @@
   display: flex;
   align-items: flex-start;
 }  
-
 
 
 /* ═══════════════════════════════════════════════════ */

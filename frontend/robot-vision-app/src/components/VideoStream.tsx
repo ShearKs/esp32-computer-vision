@@ -23,7 +23,7 @@ export const VideoStream: React.FC = () => {
   const handleLoad = () => setStatus('connected');
 
   const handleError = () => {
-    if (retryCount < 10) {
+    if (retryCount < 30) {
       setTimeout(() => {
         setRetryCount(prev => prev + 1);
         setCurrentUrl(`${rawStreamUrl}?_retry=${Date.now()}`);
@@ -50,7 +50,7 @@ export const VideoStream: React.FC = () => {
         {status === 'loading' && (
           <div className="overlay loading-overlay">
             <IonSpinner name="crescent" />
-            <p>{retryCount > 0 ? `Reintentando... (${retryCount}/10)` : 'Conectando...'}</p>
+            <p>{retryCount > 0 ? `Reintentando... (${retryCount}/30)` : 'Conectando...'}</p>
           </div>
         )}
 

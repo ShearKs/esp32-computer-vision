@@ -1,7 +1,7 @@
 {
   "casa": {
     "comment": "Sergio_router5G - WiFi (se auto-actualiza al arrancar backend)",
-    "backend_ip": "10.2.0.2",
+    "backend_ip": "192.168.48.87",
     "esp32_ip": "192.168.1.162",
     "esp32_stream_port": 81,
     "esp32_stream_path": "/stream"
@@ -13,8 +13,8 @@
     "esp32_stream_port": 81,
     "esp32_stream_path": "/stream"
   },
-  "instituto": {
-    "backend_ip": "192.168.48.207",
+  "instituto-5G": {
+    "backend_ip": "192.168.48.87",
     "esp32_ip": "192.168.48.86",
     "esp32_stream_port": 81,
     "esp32_stream_path": "/stream"

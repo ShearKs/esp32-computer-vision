@@ -26,16 +26,24 @@ _current_profile = ACTIVE_PROFILE
 # Cargar estado persistido desde active_config.json
 import os, json as _json
 from config import ACTIVE_CONFIG_FILE
+def _auto_path(port: int) -> str:
+    """Auto-detecta el path del stream según el puerto.
+    Puerto 8080 = IP Webcam (/video), Puerto 81 = ESP32-CAM (/stream)"""
+    if port == 8080:
+        return "/video"
+    return "/stream"
+
 try:
     with open(ACTIVE_CONFIG_FILE) as _f:
         _saved = _json.load(_f)
     _current_esp32_ip = _saved.get("esp32_ip", settings.esp32_ip)
     _current_esp32_port = _saved.get("esp32_port", settings.esp32_stream_port)
-    _current_esp32_path = _saved.get("esp32_path", settings.esp32_stream_path)
+    # SIEMPRE auto-detectar el path basándose en el puerto para evitar desincronización
+    _current_esp32_path = _auto_path(_current_esp32_port)
 except (FileNotFoundError, _json.JSONDecodeError):
     _current_esp32_ip = settings.esp32_ip
     _current_esp32_port = settings.esp32_stream_port
-    _current_esp32_path = settings.esp32_stream_path
+    _current_esp32_path = _auto_path(settings.esp32_stream_port)
 
 def _persist_active():
     save_active_config({
@@ -55,22 +63,35 @@ def _check_esp32_reachable():
     """Verifica si el ESP32/cámara responde.
     
     Intenta varias estrategias porque:
-    - ESP32-CAM no tiene /health, solo /, /action, y /stream (puerto 81)
-    - IP Webcam tampoco tiene /health
-    - Intentamos leer unos bytes del stream real como prueba definitiva
+    - ESP32-CAM: servidor web en puerto 80, stream en puerto 81
+    - IP Webcam: todo en puerto 8080 (/, /video, /status.json)
     """
-    # Estrategia 1: Intentar la página raíz del ESP32 (puerto 80)
-    root_url = f"http://{_current_esp32_ip}/"
+    # Estrategia 1: Intentar la página raíz en el PUERTO DEL STREAM
+    # Esto funciona para IP Webcam (8080) y ESP32-CAM (81 tiene /stream)
+    cam_root_url = f"http://{_current_esp32_ip}:{_current_esp32_port}/"
     try:
-        req = urllib.request.Request(root_url, method='GET')
+        req = urllib.request.Request(cam_root_url, method='GET')
         with urllib.request.urlopen(req, timeout=3) as resp:
             if resp.status == 200:
-                print(f"ESP32 accesible en {root_url}")
+                print(f"Cámara accesible en {cam_root_url}")
                 return True
     except Exception:
         pass
 
-    # Estrategia 2: Intentar leer los primeros bytes del stream real
+    # Estrategia 2: Intentar la página raíz del ESP32 en puerto 80
+    # (solo aplica para ESP32-CAM que tiene el servidor web en puerto 80)
+    if _current_esp32_port != 80:
+        root_url = f"http://{_current_esp32_ip}/"
+        try:
+            req = urllib.request.Request(root_url, method='GET')
+            with urllib.request.urlopen(req, timeout=3) as resp:
+                if resp.status == 200:
+                    print(f"ESP32 accesible en {root_url}")
+                    return True
+        except Exception:
+            pass
+
+    # Estrategia 3: Intentar leer los primeros bytes del stream real
     stream_url = _get_esp32_url()
     try:
         req = urllib.request.Request(stream_url, method='GET')
@@ -81,7 +102,7 @@ def _check_esp32_reachable():
                 print(f"Stream accesible en {stream_url} ({len(data)} bytes)")
                 return True
     except Exception as e:
-        print(f"ESP32/Cámara no accesible: {root_url} / {stream_url}: {e}")
+        print(f"Cámara no accesible: {cam_root_url} / {stream_url}: {e}")
 
     return False
 
@@ -152,19 +173,21 @@ async def set_profile(profile: str):
     _current_profile = profile
     _current_esp32_ip = p["esp32_ip"]
     _current_esp32_port = p.get("esp32_stream_port", 8080)
-    _current_esp32_path = p.get("esp32_stream_path", "/video")
+    _current_esp32_path = _auto_path(_current_esp32_port)
     _persist_active()
     return {"status": "ok", "active_profile": profile, "esp32_url": _get_esp32_url()}
 
 @app.post("/api/config/esp32")
 async def set_esp32(ip: str, port: int = 8080, path: str = "/video"):
-    """Configura IP manual de cámara. Persiste en disco."""
+    """Configura IP manual de cámara. Persiste en disco.
+    El path se auto-detecta según el puerto (8080=/video, 81=/stream)."""
     global _current_profile, _current_esp32_ip, _current_esp32_port, _current_esp32_path
     _current_profile = "manual"
     _current_esp32_ip = ip
     _current_esp32_port = port
-    _current_esp32_path = path
+    _current_esp32_path = _auto_path(port)  # Siempre auto-detectar
     _persist_active()
+    print(f"Camara configurada: {_get_esp32_url()}")
     return {"status": "ok", "esp32_url": _get_esp32_url()}
 
 @app.post("/api/config/profiles/save")
@@ -363,17 +386,44 @@ async def get_recent_detections(limit: int = 10):
 # ═══════════════════════════════════════════════════════
 @app.post("/api/flash")
 async def set_flash(state: str = Query(...)):
-    """Enciende o apaga el LED flash del ESP32-CAM.
+    """Enciende o apaga el LED flash de la cámara.
     
-    Proxy al endpoint /action?led=on|off del ESP32.
+    Soporta dos modos automáticamente:
+    - ESP32-CAM (puerto 81): usa /action?led=on|off en puerto 80
+    - IP Webcam (puerto 8080): usa /enabletorch o /disabletorch
     """
+    if state not in ("on", "off"):
+        raise HTTPException(status_code=400, detail="state debe ser 'on' o 'off'")
+
     esp32_ip = _current_esp32_ip
-    esp32_action_url = f"http://{esp32_ip}/action?led={state}"
-    try:
-        req = urllib.request.Request(esp32_action_url, method='GET')
-        with urllib.request.urlopen(req, timeout = 5) as resp:
-            if resp.status == 200:
-                return {"status": "ok", "flash": state}
-        raise HTTPException(status_code=502, detail = "ESP32 no respondió correctamente")
-    except Exception as e:
-        raise HTTPException(status_code=502, detail = f"Error comunicando con ESP32: {str(e)}")
+    port = _current_esp32_port
+
+    # Detectar qué tipo de cámara es según el puerto del stream
+    if port == 8080:
+        # No hace falta hacer esto ya que lo que quería era darle al led del ESP-32 pero bueno hecho está y funciona
+        # IP Webcam (app Android)
+        torch_action = "enabletorch" if state == "on" else "disabletorch"
+        flash_url = f"http://{esp32_ip}:{port}/{torch_action}"
+    else:
+        # ESP32-CAM: el flash está en /action?led= del servidor HTTP (puerto 80)
+        flash_url = f"http://{esp32_ip}/action?led={state}"
+
+    last_error = None
+    for attempt in range(3):
+        try:
+            req = urllib.request.Request(flash_url, method='GET')
+            with urllib.request.urlopen(req, timeout=5) as resp:
+                resp.read()  # Liberar el socket
+                if resp.status == 200:
+                    mode = "IP Webcam" if port == 8080 else "ESP32-CAM"
+                    print(f"Flash {state.upper()} via {mode} (intento {attempt + 1})")
+                    return {"status": "ok", "flash": state, "mode": mode}
+        except Exception as e:
+            last_error = e
+            print(f"Flash intento {attempt + 1} falló: {e}")
+            await asyncio.sleep(0.5)
+
+    raise HTTPException(
+        status_code=502,
+        detail=f"Error comunicando con la cámara tras 3 intentos: {str(last_error)}"
+    )

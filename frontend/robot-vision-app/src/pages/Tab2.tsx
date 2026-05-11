@@ -30,6 +30,8 @@ const Tab2: React.FC = () => {
   const [esp32Port, setEsp32Port] = useState('8080');
   const [esp32Status, setEsp32Status] = useState<{ ok: boolean; msg: string } | null>(null);
   const [settingEsp32, setSettingEsp32] = useState(false);
+  // Flag para saber si el usuario está editando los campos de cámara manualmente
+  const [esp32Dirty, setEsp32Dirty] = useState(false);
 
   // Editor de perfiles
   const [showProfileEditor, setShowProfileEditor] = useState(false);
@@ -51,8 +53,11 @@ const Tab2: React.FC = () => {
       const config = await ApiService.getConfig();
       setEsp32Url(config.esp32_url);
       setActiveProfile(config.active_profile);
-      setEsp32Ip(config.esp32_ip);
-      setEsp32Port(String(config.stream_port));
+      // Solo actualizar los inputs si el usuario NO los está editando
+      if (!esp32Dirty) {
+        setEsp32Ip(config.esp32_ip);
+        setEsp32Port(String(config.stream_port));
+      }
 
       const profiles = await ApiService.fetchBackendProfiles();
       if (Object.keys(profiles).length > 0) {
@@ -128,6 +133,7 @@ const Tab2: React.FC = () => {
     const ok = await ApiService.setEsp32Ip(ip, parseInt(esp32Port) || 8080);
     setSettingEsp32(false);
     if (ok) {
+      setEsp32Dirty(false); // Tras aplicar, volver a sincronizar con el backend
       setEsp32Status({ ok: true, msg: `Cámara configurada: ${ip}:${esp32Port}` });
       await loadBackendData();
     } else {
@@ -336,7 +342,8 @@ const Tab2: React.FC = () => {
           <IonInput
             placeholder="192.168.1.132"
             value={esp32Ip}
-            onIonInput={e => setEsp32Ip(e.detail.value!)}
+            onIonInput={e => { setEsp32Ip(e.detail.value!); setEsp32Dirty(true); }}
+            onIonFocus={() => setEsp32Dirty(true)}
             className="manual-ip-input"
             clearInput
             style={{ flex: 2 }}
@@ -344,7 +351,8 @@ const Tab2: React.FC = () => {
           <IonInput
             placeholder="8080"
             value={esp32Port}
-            onIonInput={e => setEsp32Port(e.detail.value!)}
+            onIonInput={e => { setEsp32Port(e.detail.value!); setEsp32Dirty(true); }}
+            onIonFocus={() => setEsp32Dirty(true)}
             className="manual-ip-input"
             clearInput
             style={{ flex: 1, maxWidth: 100 }}

@@ -80,15 +80,29 @@ const Home: React.FC = () => {
 
       if (cancelled) return;
 
-      // Ahora esperar a que la cámara esté lista
-      setStatusMsg('Conectando con la cámara...');
-      try {
-        await ApiService.waitForStream(20, 1500);
-        console.log('✅ [Init] Stream listo');
-      } catch {
-        console.warn('⚠️ [Init] Stream no disponible, mostrando UI igualmente');
+      // Ahora esperar a que la cámara esté lista (pero no bloquear demasiado)
+      setStatusMsg('Buscando cámara...');
+      let cameraFound = false;
+      for (let i = 0; i < 5; i++) {
+        if (cancelled) return;
+        try {
+          const data = await ApiService.isStreamReady();
+          if (data.ready) {
+            console.log('[Init] Cámara lista');
+            cameraFound = true;
+            break;
+          }
+        } catch { /* reintentar */ }
+        setStatusMsg(`Buscando cámara... (${i + 1}/5)`);
+        await new Promise(r => setTimeout(r, 1500));
       }
 
+      if (!cameraFound) {
+        console.warn('[Init] Cámara no encontrada aún, mostrando UI igualmente (los componentes reintentarán)');
+      }
+
+      // Siempre mostrar la UI — los componentes VideoStream/DetectionStream 
+      // tienen su propia lógica de reintentos (30 intentos)
       if (!cancelled) setReady(true);
     };
 

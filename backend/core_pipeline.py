@@ -177,7 +177,7 @@ class FrameGrabber:
     Usa urllib en vez de cv2.VideoCapture porque este último
     se cuelga indefinidamente con streams ESP32-CAM.
     """
-    def __init__(self, stream_url: str, timeout: int = 10):
+    def __init__(self, stream_url: str, timeout: int = 10, max_retries: int = 5):
         self.stream_url = stream_url
         self.timeout = timeout
         self._frame = None
@@ -188,16 +188,22 @@ class FrameGrabber:
         self._opened = False
         self._response = None
 
-        # Intentar abrir la conexión HTTP
-        try:
-            import urllib.request
-            req = urllib.request.Request(stream_url)
-            self._response = urllib.request.urlopen(req, timeout=timeout)
-            self._opened = True
-            print(f"FrameGrabber conectado a {stream_url}")
-        except Exception as e:
-            print(f"FrameGrabber no pudo conectar a {stream_url}: {e}")
-            self._opened = False
+        # Intentar abrir la conexión HTTP con reintentos
+        import urllib.request
+        for attempt in range(max_retries):
+            try:
+                req = urllib.request.Request(stream_url)
+                self._response = urllib.request.urlopen(req, timeout=timeout)
+                self._opened = True
+                print(f"FrameGrabber conectado a {stream_url} (intento {attempt + 1})")
+                break
+            except Exception as e:
+                print(f"FrameGrabber intento {attempt + 1}/{max_retries} fallo: {e}")
+                if attempt < max_retries - 1:
+                    time.sleep(2)
+                else:
+                    print(f"FrameGrabber: no se pudo conectar tras {max_retries} intentos")
+                    self._opened = False
 
     @property
     def is_opened(self):

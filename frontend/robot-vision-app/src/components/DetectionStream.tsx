@@ -25,7 +25,7 @@ export const DetectionStream: React.FC<DetectionStreamProps> = ({ confidence }) 
   const handleLoad = () => setStatus('connected');
 
   const handleError = () => {
-    if (retryCount < 10) {
+    if (retryCount < 30) {
       setTimeout(() => {
         setRetryCount(prev => prev + 1);
         const separator = streamUrl.includes('?') ? '&' : '?';
@@ -61,7 +61,7 @@ export const DetectionStream: React.FC<DetectionStreamProps> = ({ confidence }) 
         {status === 'loading' && (
           <div className="detection-overlay loading-overlay">
             <IonSpinner name="crescent" />
-            <p>{retryCount > 0 ? `Reintentando... (${retryCount}/10)` : 'Cargando modelo YOLO...'}</p>
+            <p>{retryCount > 0 ? `Reintentando... (${retryCount}/30)` : 'Cargando modelo YOLO...'}</p>
             <small>Esto puede tardar unos segundos</small>
           </div>
         )}
