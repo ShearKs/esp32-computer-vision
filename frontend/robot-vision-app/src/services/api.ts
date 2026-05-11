@@ -327,6 +327,19 @@ export const ApiService = {
     return data.detections;
   },
 
+  /** Enciende/apaga el LED flash del ESP32-CAM */
+  async setFlash(on: boolean): Promise<boolean> {
+    const base = ApiService.getBaseUrl();
+    const state = on ? 'on' : 'off';
+    try {
+      // Realizamos la peticion al backend, que a su vez se la pasará al ESP32
+      const res = await fetch(`${base}/api/flash?state=${state}`, { method: 'POST' });
+      return res.ok;
+    } catch {
+      return false;
+    }
+  },
+
   subscribeDetections(callback: DetectionsCallback): () => void {
     const base = ApiService.getBaseUrl();
     const es = new EventSource(`${base}/api/stream/yolo/events`);

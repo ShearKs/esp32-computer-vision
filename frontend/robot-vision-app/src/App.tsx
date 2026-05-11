@@ -20,11 +20,12 @@ import {
   setupIonicReact
 } from '@ionic/react';
 import { IonReactRouter } from '@ionic/react-router';
-import { gameController, wifi, ellipse, cogOutline, eyeOutline, eyeOffOutline } from 'ionicons/icons';
+import { gameController, wifi, ellipse, cogOutline, eyeOutline, eyeOffOutline, flashlightOutline, flashlightSharp  } from 'ionicons/icons';
 import Tab1 from './pages/HomePage';
 import Tab2 from './pages/Tab2';
 import Tab3 from './pages/Tab3';
 import { SettingsProvider, useSettings } from './context/SettingsContext';
+import { ApiService } from './services/api';
 
 /* Core CSS required for Ionic components to work properly */
 import '@ionic/react/css/core.css';
@@ -53,6 +54,7 @@ setupIonicReact();
 // Menú lateral con acceso al contexto
 const AppMenu: React.FC = () => {
   const { yoloEnabled, setYoloEnabled } = useSettings();
+  const { flashActive, setFlashActive } = useSettings();
 
   return (
     <IonMenu contentId="main-content" menuId="main-menu" side="end" className="app-side-menu">
@@ -85,6 +87,21 @@ const AppMenu: React.FC = () => {
                 onIonChange={(e) => setYoloEnabled(e.detail.checked)}
                 color="danger"
               />
+            </IonItem>
+            <IonItem className="menu-item">
+              <IonIcon 
+                slot="start" icon={flashActive ? flashlightSharp : flashlightOutline}
+                className="menu-icon" />
+               <IonLabel>
+                <h3>Flash</h3>
+              </IonLabel>
+             <IonToggle
+                checked={flashActive}
+                onIonChange={(e) => {
+                  const on = e.detail.checked;
+                  setFlashActive(on);
+                  ApiService.setFlash(on);
+                }} />
             </IonItem>
           </IonList>
         </div>

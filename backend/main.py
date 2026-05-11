@@ -6,10 +6,19 @@ from fastapi import FastAPI, BackgroundTasks, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 import uvicorn
-from config import settings, NETWORK_PROFILES, ACTIVE_PROFILE, save_active_config, save_profiles, load_profiles, PROFILES_FILE
+from config import settings, NETWORK_PROFILES, ACTIVE_PROFILE, save_active_config, save_profiles, load_profiles, PROFILES_FILE, get_local_ip
 from core_pipeline import run_detection_session, stream_yolo_frames, get_latest_detections
 
 app = FastAPI()
+
+@app.on_event("startup")
+async def startup_event():
+    ip = get_local_ip()
+    print("\n" + "="*50)
+    print(" BACKEND DEL ROBOT INICIADO")
+    print(f" TU IP ACTUAL: {ip}")
+    print(f" EN EL MOVIL (APK): Configura http://{ip}:8000")
+    print("="*50 + "\n")
 
 # ─── Config mutable + persistente ────────────────────────────────────
 _current_profile = ACTIVE_PROFILE
@@ -88,6 +97,18 @@ app.add_middleware(
 @app.get("/health")
 async def health_check():
     return {"status": "ok"}
+
+@app.get("/api/server-info")
+async def server_info():
+    """Devuelve la IP real del servidor para que el frontend
+    pueda auto-descubrirse sin IPs hardcodeadas."""
+    ip = get_local_ip()
+    return {
+        "server_ip": ip,
+        "server_url": f"http://{ip}:8000",
+        "active_profile": _current_profile,
+        "esp32_url": _get_esp32_url()
+    }
 
 # ═══════════════════════════════════════════════════════
 # CONFIGURACIÓN
@@ -334,3 +355,25 @@ async def start_detection(
 async def get_recent_detections(limit: int = 10):
     global _recent_detections
     return {"detections": _recent_detections[-limit:]}
+
+
+
+# ═══════════════════════════════════════════════════════
+# PARA ACTIVAR EL FLASH
+# ═══════════════════════════════════════════════════════
+@app.post("/api/flash")
+async def set_flash(state: str = Query(...)):
+    """Enciende o apaga el LED flash del ESP32-CAM.
+    
+    Proxy al endpoint /action?led=on|off del ESP32.
+    """
+    esp32_ip = _current_esp32_ip
+    esp32_action_url = f"http://{esp32_ip}/action?led={state}"
+    try:
+        req = urllib.request.Request(esp32_action_url, method='GET')
+        with urllib.request.urlopen(req, timeout = 5) as resp:
+            if resp.status == 200:
+                return {"status": "ok", "flash": state}
+        raise HTTPException(status_code=502, detail = "ESP32 no respondió correctamente")
+    except Exception as e:
+        raise HTTPException(status_code=502, detail = f"Error comunicando con ESP32: {str(e)}")

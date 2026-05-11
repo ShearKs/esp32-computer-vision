@@ -1,14 +1,14 @@
 {
   "casa": {
-    "comment": "Sergio_router5G - ESP32-CAM real (stream en puerto 81 path /stream)",
-    "backend_ip": "192.168.1.174",
+    "comment": "Sergio_router5G - WiFi (se auto-actualiza al arrancar backend)",
+    "backend_ip": "10.2.0.2",
     "esp32_ip": "192.168.1.162",
     "esp32_stream_port": 81,
     "esp32_stream_path": "/stream"
   },
   "casa-cable": {
     "comment": "Sergio_router5G - Ethernet",
-    "backend_ip": "192.168.1.174",
+    "backend_ip": "192.168.1.173",
     "esp32_ip": "192.168.1.173",
     "esp32_stream_port": 81,
     "esp32_stream_path": "/stream"
@@ -27,16 +27,10 @@
     "esp32_stream_path": "/video"
   },
   "ipwebcam": {
-    "comment": "IP Webcam genérica - ajusta la IP según tu móvil",
-    "backend_ip": "192.168.1.174",
+    "comment": "IP Webcam gen\u00c3\u00a9rica - ajusta la IP seg\u00c3\u00ban tu m\u00c3\u00b3vil",
+    "backend_ip": "192.168.1.173",
     "esp32_ip": "192.168.1.XXX",
     "esp32_stream_port": 8080,
     "esp32_stream_path": "/video"
-  },
-  "wsl-actual": {
-    "backend_ip": "192.168.192.207",
-    "esp32_ip": "192.168.192.132",
-    "esp32_stream_port": 81,
-    "esp32_stream_path": "/stream"
   }
 }

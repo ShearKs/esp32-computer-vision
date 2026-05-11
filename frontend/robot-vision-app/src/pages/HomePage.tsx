@@ -45,11 +45,11 @@ const Home: React.FC = () => {
       console.log(`🔌 [Init] Base URL inicial: ${ApiService.getBaseUrl()}`);
 
       if (isNative) {
-        console.log('🔍 [Init] Escaneando red...');
+        console.log('[Init] Escaneando red...');
         setStatusMsg('Escaneando redes...');
         const found = await ApiService.scanNetwork();
-        console.log(`🔍 [Init] Scan resultado: ${found ? '✅ Encontrado' : '❌ No encontrado'}`);
-        console.log(`🔍 [Init] Base URL tras scan: ${ApiService.getBaseUrl()}`);
+        console.log(`[Init] Scan resultado: ${found ? 'Encontrado' : '❌ No encontrado'}`);
+        console.log(`[Init] Base URL tras scan: ${ApiService.getBaseUrl()}`);
 
         if (!found) {
           if (!cancelled) setError(`No se encontró el backend en ninguna red conocida. Configura la IP en la pestaña "Red".`);
@@ -102,7 +102,7 @@ const Home: React.FC = () => {
         <IonToolbar>
           <IonTitle>🤖 Robot Control</IonTitle>
           <IonButtons slot="end">
-            <IonMenuButton menu="main-menu" autoHide={false} />
+            <IonMenuButton menu="main-menu" autoHide = {false} />
           </IonButtons>
         </IonToolbar>
       </IonHeader>

@@ -34,7 +34,7 @@ try:
     _profiles = _config.get("profiles", {})
     PROFILE = _profiles.get(MODEL_NAME, _DEFAULTS)
 except (FileNotFoundError, json.JSONDecodeError) as e:
-    print(f"⚠️ No se pudo leer model_profiles.json ({e}), usando defaults")
+    print(f"No se pudo leer model_profiles.json ({e}), usando defaults")
     MODEL_NAME = "yolov8s"
     PROFILE = _DEFAULTS
 
@@ -194,9 +194,9 @@ class FrameGrabber:
             req = urllib.request.Request(stream_url)
             self._response = urllib.request.urlopen(req, timeout=timeout)
             self._opened = True
-            print(f"✅ FrameGrabber conectado a {stream_url}")
+            print(f"FrameGrabber conectado a {stream_url}")
         except Exception as e:
-            print(f"❌ FrameGrabber no pudo conectar a {stream_url}: {e}")
+            print(f"FrameGrabber no pudo conectar a {stream_url}: {e}")
             self._opened = False
 
     @property
@@ -218,7 +218,7 @@ class FrameGrabber:
             try:
                 chunk = self._response.read(4096)
                 if not chunk:
-                    print("⚠️ FrameGrabber: stream cerrado por el servidor")
+                    print("FrameGrabber: stream cerrado por el servidor")
                     break
                 buf += chunk
 
@@ -247,7 +247,7 @@ class FrameGrabber:
                     buf = buf[-100000:]
 
             except Exception as e:
-                print(f"⚠️ FrameGrabber error: {e}")
+                print(f"FrameGrabber error: {e}")
                 break
 
         self._running = False
@@ -268,8 +268,6 @@ class FrameGrabber:
                 self._response.close()
             except:
                 pass
-
-
 
 
 
