@@ -15,7 +15,7 @@ import './HomePage.css';
 
 const Home: React.FC = () => {
   const handleMove = (direction: string, speed: number, x: number, y: number) => {
-    console.log(`🚗 Mover: ${direction} | Velocidad: ${speed}%`);
+    console.log(`Mover: ${direction} | Velocidad: ${speed}%`);
   };
 
   const handleStop = () => console.log('🛑 Stop');
@@ -63,9 +63,10 @@ const Home: React.FC = () => {
         if (cancelled) return;
         setStatusMsg(`Esperando al backend... (${i + 1}/${MAX_RETRIES})`);
         try {
+          // Hacer un health check simple para comprobar que accedemos al backend
           const ok = await ApiService.healthCheck();
           if (ok) {
-            console.log('✅ [Init] Backend accesible');
+            console.log('[Init] Backend accesible');
             break;
           }
         } catch { /* reintentar */ }
@@ -144,12 +145,12 @@ const Home: React.FC = () => {
             
             {/* Columna izquierda: Panel de detecciones */}
             <div className="controls-detections">
-              {yoloEnabled && <DetectionPanel active={ready} />}
+              <DetectionPanel/>
             </div>
 
             {/* Columna derecha: Joystick */}
             <div className="controls-joystick">
-              <JoystickControl onMove={handleMove} onStop={handleStop} />
+              <JoystickControl onMove = {handleMove} onStop = {handleStop} />
             </div>
 
           </div>

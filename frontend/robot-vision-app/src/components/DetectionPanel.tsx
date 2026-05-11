@@ -40,43 +40,33 @@ const getConfidenceColor = (conf: number): string => {
   return 'medium';
 };
 
-export const DetectionPanel: React.FC<{ active: boolean }> = ({ active }) => {
+export const DetectionPanel: React.FC<{}> = ({ }) => {
   const [detections, setDetections] = useState<Detection[]>([]);
   const [objectCounts, setObjectCounts] = useState<Record<string, number>>({});
   const [totalDetected, setTotalDetected] = useState(0);
   const unsubscribeRef = useRef<(() => void) | null>(null);
 
-  useEffect(() => {
-    if (!active) {
-      if (unsubscribeRef.current) {
-        unsubscribeRef.current();
-        unsubscribeRef.current = null;
-      }
-      return;
-    }
+    useEffect(() => {
+      const handleDetections = (event: YoloEvent) => {
+        setDetections(event.detections || []);
+        setTotalDetected(event.count || 0);
 
-    const handleDetections = (event: YoloEvent) => {
-      setDetections(event.detections || []);
-      setTotalDetected(event.count || 0);
+        const counts: Record<string, number> = {};
+        (event.detections || []).forEach((d: Detection) => {
+          counts[d.object] = (counts[d.object] || 0) + 1;
+        });
+        setObjectCounts(counts);
+      };
 
-      const counts: Record<string, number> = {};
-      (event.detections || []).forEach((d: Detection) => {
-        counts[d.object] = (counts[d.object] || 0) + 1;
-      });
-      setObjectCounts(counts);
-    };
+      unsubscribeRef.current = ApiService.subscribeDetections(handleDetections);
 
-    unsubscribeRef.current = ApiService.subscribeDetections(handleDetections);
-
-    return () => {
-      if (unsubscribeRef.current) {
-        unsubscribeRef.current();
-        unsubscribeRef.current = null;
-      }
-    };
-  }, [active]);
-
-  if (!active) return null;
+      return () => {
+        if (unsubscribeRef.current) {
+          unsubscribeRef.current();
+          unsubscribeRef.current = null;
+        }
+      };
+    }, []);
 
   return (
     <IonCard className="detection-panel">
@@ -113,15 +103,15 @@ export const DetectionPanel: React.FC<{ active: boolean }> = ({ active }) => {
                   <div className="det-info">
                     <span className="det-name">{det.object}</span>
                     <div className="confidence-bar-container">
-                      <div 
-                        className="confidence-bar" 
+                      <div
+                        className="confidence-bar"
                         style={{ width: `${det.confidence * 100}%` }}
                         data-confidence={getConfidenceColor(det.confidence)}
                       />
                     </div>
                   </div>
-                  <IonBadge 
-                    color={getConfidenceColor(det.confidence)} 
+                  <IonBadge
+                    color={getConfidenceColor(det.confidence)}
                     className="conf-badge"
                   >
                     {(det.confidence * 100).toFixed(0)}%
