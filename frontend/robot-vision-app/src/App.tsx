@@ -57,16 +57,17 @@ const AppMenu: React.FC = () => {
   const { yoloEnabled, setYoloEnabled, flashActive, setFlashActive, triggerReload } = useSettings();
   const [reloading, setReloading] = useState(false);
 
+  // Función para recargar la conexión: resetea backend y dispara recarga frontend
   const handleReload = async () => {
     setReloading(true);
     try {
-      // 1. Pedir al backend que resetee el pipeline (esperar respuesta)
+      // Pedir al backend que resetee el pipeline (esperar respuesta)
       const result = await ApiService.reconnect();
       console.log('🔄 Backend reconnect:', result);
     } catch { /* seguimos igualmente */ }
-    // 2. Dar tiempo al backend para cerrar streams antiguos
+    // Dar tiempo al backend para cerrar streams antiguos, medio segundo...
     await new Promise(r => setTimeout(r, 500));
-    // 3. Disparar recarga en el frontend (re-monta streams)
+    // Disparar recarga en el frontend (re-monta streams)
     triggerReload();
     // Delay visual para feedback
     setTimeout(() => setReloading(false), 1000);

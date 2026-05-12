@@ -7,6 +7,7 @@ import {
   IonModal, IonTextarea
 } from '@ionic/react';
 import { ApiService } from '../services/api';
+import { useSettings } from '../context/SettingsContext';
 import { NetworkProfile } from '../types/interfaces';
 import {
   checkmarkCircle, closeCircle, wifi, bugOutline,
@@ -15,6 +16,7 @@ import {
 import './Tab2.css';
 
 const Tab2: React.FC = () => {
+  const { triggerReload } = useSettings();
   // Perfiles: se obtienen del backend (fuente única de verdad)
   const [backendProfiles, setBackendProfiles] = useState<Record<string, { backend_ip: string; esp32_ip: string }>>({});
   const [activeProfile, setActiveProfile] = useState<string | null>(null);
@@ -139,7 +141,6 @@ const Tab2: React.FC = () => {
     setSettingEsp32(true);
     setEsp32Status(null);
     const ok = await ApiService.setEsp32Ip(ip, parseInt(esp32Port) || 8080);
-    setSettingEsp32(false);
     if (ok) {
       setEsp32Status({ ok: true, msg: `Cámara configurada: ${ip}:${esp32Port}` });
       // Recargar URL de cámara actualizada (pero NO sobreescribir inputs)
@@ -147,9 +148,14 @@ const Tab2: React.FC = () => {
         const config = await ApiService.getConfig();
         setEsp32Url(config.esp32_url);
       } catch {}
+      // Forzar reconexión completa (libera grabber backend + remonta streams frontend)
+      await ApiService.reconnect();
+      await new Promise(r => setTimeout(r, 500));
+      triggerReload();
     } else {
       setEsp32Status({ ok: false, msg: `Error al configurar cámara ${ip}` });
     }
+    setSettingEsp32(false);
   };
 
   const openProfileEditor = async () => {
@@ -330,8 +336,8 @@ const Tab2: React.FC = () => {
 
         <div className="manual-ip-row">
           <IonInput
-            placeholder="192.168.1.132"
-            value={esp32Ip}
+            placeholder = "192.168.1.132"
+            value = {esp32Ip}
             onIonInput={e => setEsp32Ip(e.detail.value!)}
             className="manual-ip-input"
             clearInput
@@ -339,7 +345,7 @@ const Tab2: React.FC = () => {
           />
           <IonInput
             placeholder="8080"
-            value={esp32Port}
+            value = {esp32Port}
             onIonInput={e => setEsp32Port(e.detail.value!)}
             className="manual-ip-input"
             clearInput

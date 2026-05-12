@@ -1,6 +1,6 @@
 {
   "active_profile": "manual",
-  "esp32_ip": "192.168.1.162",
-  "esp32_port": 81,
-  "esp32_path": "/stream"
+  "esp32_ip": "192.168.48.86",
+  "esp32_port": 8080,
+  "esp32_path": "/video"
 }
