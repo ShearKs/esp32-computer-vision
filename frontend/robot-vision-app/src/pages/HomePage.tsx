@@ -25,7 +25,7 @@ const Home: React.FC = () => {
   const [statusMsg, setStatusMsg] = useState('Conectando con el servidor...');
   const [streamKey, setStreamKey] = useState(0);
   const [retryKey, setRetryKey] = useState(0);
-  const { yoloEnabled } = useSettings();
+  const { yoloEnabled, reloadKey } = useSettings();
 
   const handleRetry = () => {
     setReady(false);
@@ -36,73 +36,65 @@ const Home: React.FC = () => {
 
   useEffect(() => { setStreamKey(prev => prev + 1); }, [yoloEnabled]);
 
+  // Escuchar reloadKey del menú lateral → forzar reconexión completa
+  useEffect(() => {
+    if (reloadKey === 0) return; // Ignorar el montaje inicial
+    console.log('🔄 Recarga disparada desde el menú');
+    setReady(false);
+    setError(null);
+    setStatusMsg('Reconectando...');
+    setStreamKey(prev => prev + 1);
+    setRetryKey(prev => prev + 1);
+  }, [reloadKey]);
+
   useEffect(() => {
     let cancelled = false;
 
     const init = async () => {
       const isNative = Capacitor.isNativePlatform();
       console.log(`🔌 [Init] Plataforma nativa: ${isNative}`);
-      console.log(`🔌 [Init] Base URL inicial: ${ApiService.getBaseUrl()}`);
 
       if (isNative) {
-        console.log('[Init] Escaneando red...');
         setStatusMsg('Escaneando redes...');
         const found = await ApiService.scanNetwork();
-        console.log(`[Init] Scan resultado: ${found ? 'Encontrado' : '❌ No encontrado'}`);
-        console.log(`[Init] Base URL tras scan: ${ApiService.getBaseUrl()}`);
-
         if (!found) {
           if (!cancelled) setError(`No se encontró el backend en ninguna red conocida. Configura la IP en la pestaña "Red".`);
           return;
         }
       }
 
-      // Esperar a que el backend esté accesible antes de montar los streams
-      const MAX_RETRIES = 30;
+      // Esperar a que el backend esté accesible (máx ~15s)
+      const MAX_RETRIES = 15;
       for (let i = 0; i < MAX_RETRIES; i++) {
         if (cancelled) return;
         setStatusMsg(`Esperando al backend... (${i + 1}/${MAX_RETRIES})`);
         try {
-          // Hacer un health check simple para comprobar que accedemos al backend
           const ok = await ApiService.healthCheck();
-          if (ok) {
-            console.log('[Init] Backend accesible');
-            break;
-          }
+          if (ok) break;
         } catch { /* reintentar */ }
 
         if (i === MAX_RETRIES - 1) {
           if (!cancelled) setError('No se pudo conectar al backend. Verifica que el servidor esté corriendo.');
           return;
         }
-        await new Promise(r => setTimeout(r, 1500));
+        await new Promise(r => setTimeout(r, 1000));
       }
 
       if (cancelled) return;
 
-      // Ahora esperar a que la cámara esté lista (pero no bloquear demasiado)
+      // Esperar cámara (pero no bloquear demasiado, máx ~3s)
       setStatusMsg('Buscando cámara...');
-      let cameraFound = false;
-      for (let i = 0; i < 5; i++) {
+      for (let i = 0; i < 3; i++) {
         if (cancelled) return;
         try {
           const data = await ApiService.isStreamReady();
-          if (data.ready) {
-            console.log('[Init] Cámara lista');
-            cameraFound = true;
-            break;
-          }
+          if (data.ready) break;
         } catch { /* reintentar */ }
-        setStatusMsg(`Buscando cámara... (${i + 1}/5)`);
-        await new Promise(r => setTimeout(r, 1500));
+        setStatusMsg(`Buscando cámara... (${i + 1}/3)`);
+        await new Promise(r => setTimeout(r, 1000));
       }
 
-      if (!cameraFound) {
-        console.warn('[Init] Cámara no encontrada aún, mostrando UI igualmente (los componentes reintentarán)');
-      }
-
-      // Siempre mostrar la UI — los componentes VideoStream/DetectionStream 
-      // tienen su propia lógica de reintentos (30 intentos)
+      // Siempre mostrar la UI — los componentes tienen su propia lógica de reintentos
       if (!cancelled) setReady(true);
     };
 
@@ -159,7 +151,7 @@ const Home: React.FC = () => {
             
             {/* Columna izquierda: Panel de detecciones */}
             <div className="controls-detections">
-              <DetectionPanel/>
+              <DetectionPanel yoloEnabled={yoloEnabled}/>
             </div>
 
             {/* Columna derecha: Joystick */}

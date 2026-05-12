@@ -7,7 +7,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 import uvicorn
 from config import settings, NETWORK_PROFILES, ACTIVE_PROFILE, save_active_config, save_profiles, load_profiles, PROFILES_FILE, get_local_ip
-from core_pipeline import run_detection_session, stream_yolo_frames, get_latest_detections
+from core_pipeline import run_detection_session, stream_yolo_frames, get_latest_detections, force_release_grabber
 
 app = FastAPI()
 
@@ -60,49 +60,26 @@ def _get_esp32_url():
     return f"http://{_current_esp32_ip}:{_current_esp32_port}{_current_esp32_path}"
 
 def _check_esp32_reachable():
-    """Verifica si el ESP32/cámara responde.
-    
-    Intenta varias estrategias porque:
-    - ESP32-CAM: servidor web en puerto 80, stream en puerto 81
-    - IP Webcam: todo en puerto 8080 (/, /video, /status.json)
-    """
-    # Estrategia 1: Intentar la página raíz en el PUERTO DEL STREAM
-    # Esto funciona para IP Webcam (8080) y ESP32-CAM (81 tiene /stream)
-    cam_root_url = f"http://{_current_esp32_ip}:{_current_esp32_port}/"
+    """Verifica rápidamente si el ESP32/cámara responde (timeout 2s)."""
+    # Intentar la raíz del puerto de stream — funciona con ESP32-CAM y IP Webcam
+    check_url = f"http://{_current_esp32_ip}:{_current_esp32_port}/"
     try:
-        req = urllib.request.Request(cam_root_url, method='GET')
-        with urllib.request.urlopen(req, timeout=3) as resp:
+        req = urllib.request.Request(check_url, method='GET')
+        with urllib.request.urlopen(req, timeout=2) as resp:
             if resp.status == 200:
-                print(f"Cámara accesible en {cam_root_url}")
                 return True
     except Exception:
         pass
 
-    # Estrategia 2: Intentar la página raíz del ESP32 en puerto 80
-    # (solo aplica para ESP32-CAM que tiene el servidor web en puerto 80)
+    # Fallback: intentar raíz en puerto 80 (ESP32-CAM servidor web)
     if _current_esp32_port != 80:
-        root_url = f"http://{_current_esp32_ip}/"
         try:
-            req = urllib.request.Request(root_url, method='GET')
-            with urllib.request.urlopen(req, timeout=3) as resp:
+            req = urllib.request.Request(f"http://{_current_esp32_ip}/", method='GET')
+            with urllib.request.urlopen(req, timeout=2) as resp:
                 if resp.status == 200:
-                    print(f"ESP32 accesible en {root_url}")
                     return True
         except Exception:
             pass
-
-    # Estrategia 3: Intentar leer los primeros bytes del stream real
-    stream_url = _get_esp32_url()
-    try:
-        req = urllib.request.Request(stream_url, method='GET')
-        with urllib.request.urlopen(req, timeout=4) as resp:
-            # Leer solo unos pocos bytes para verificar que responde
-            data = resp.read(256)
-            if len(data) > 0:
-                print(f"Stream accesible en {stream_url} ({len(data)} bytes)")
-                return True
-    except Exception as e:
-        print(f"Cámara no accesible: {cam_root_url} / {stream_url}: {e}")
 
     return False
 
@@ -206,6 +183,58 @@ async def get_raw_profiles():
     return load_profiles()
 
 # ═══════════════════════════════════════════════════════
+# RECONEXIÓN FORZADA
+# ═══════════════════════════════════════════════════════
+
+@app.post("/api/reconnect")
+async def force_reconnect():
+    """Fuerza la reconexión del pipeline completo.
+    
+    - Mata el FrameGrabber activo (libera la conexión al ESP32)
+    - Resetea el flag del stream YOLO activo
+    - Re-lee la configuración persistida (por si cambió la IP de cámara)
+    - Limpia las detecciones recientes
+    
+    El frontend debe llamar a esto y luego re-montar los componentes de stream.
+    """
+    global _yolo_stream_active, _current_esp32_ip, _current_esp32_port, _current_esp32_path
+    global _recent_detections
+
+    # 1. Matar el FrameGrabber activo (libera el socket del ESP32)
+    await asyncio.to_thread(force_release_grabber)
+
+    # 2. Parar tracking del stream activo
+    _yolo_stream_active = False
+
+    # 3. Esperar a que el ESP32 libere su socket de stream
+    await asyncio.sleep(0.5)
+
+    # 4. Re-leer config persistida (por si el usuario cambió la cámara)
+    try:
+        with open(ACTIVE_CONFIG_FILE) as f:
+            saved = _json.load(f)
+        _current_esp32_ip = saved.get("esp32_ip", _current_esp32_ip)
+        _current_esp32_port = saved.get("esp32_port", _current_esp32_port)
+        _current_esp32_path = _auto_path(_current_esp32_port)
+        print(f"🔄 Reconnect: config recargada → {_get_esp32_url()}")
+    except Exception as e:
+        print(f"🔄 Reconnect: no se pudo recargar config ({e}), usando actual")
+
+    # 5. Limpiar detecciones
+    _recent_detections = []
+
+    # 6. Verificar si la cámara responde (ahora debería estar libre)
+    reachable = await asyncio.to_thread(_check_esp32_reachable)
+
+    return {
+        "status": "ok",
+        "esp32_url": _get_esp32_url(),
+        "camera_reachable": reachable,
+        "message": "Pipeline reseteado. El próximo stream abrirá una conexión nueva."
+    }
+
+
+# ═══════════════════════════════════════════════════════
 # STREAM READY
 # ═══════════════════════════════════════════════════════
 
@@ -244,7 +273,7 @@ async def yolo_stream(confidence: float = None):
             yield from stream_yolo_frames(stream_url, confidence)
         finally:
             _yolo_stream_active = False
-            print("📹 Stream YOLO finalizado")
+            print("Stream YOLO finalizado")
 
     return StreamingResponse(
         _tracked_stream(),

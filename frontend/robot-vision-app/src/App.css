@@ -77,3 +77,34 @@
 .menu-item-placeholder {
   opacity: 0.5;
 }
+
+/* ═══ Reload button ═══ */
+.menu-item-reload {
+  --background: rgba(76, 217, 100, 0.06);
+  --background-hover: rgba(76, 217, 100, 0.12);
+  transition: opacity 0.3s;
+}
+
+.menu-item-reload[disabled] {
+  opacity: 0.7;
+}
+
+.menu-icon-spin {
+  animation: spin-reload 0.8s linear infinite;
+}
+
+@keyframes spin-reload {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
+}
+
+.menu-status-reloading {
+  color: #ff9500 !important;
+  font-weight: 600;
+  animation: pulse-text 1s ease-in-out infinite alternate;
+}
+
+@keyframes pulse-text {
+  from { opacity: 0.5; }
+  to { opacity: 1; }
+}

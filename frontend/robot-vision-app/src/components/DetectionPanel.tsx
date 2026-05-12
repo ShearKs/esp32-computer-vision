@@ -40,33 +40,50 @@ const getConfidenceColor = (conf: number): string => {
   return 'medium';
 };
 
-export const DetectionPanel: React.FC<{}> = ({ }) => {
+interface DetectionPanelProps {
+  yoloEnabled: boolean;
+}
+
+export const DetectionPanel: React.FC<DetectionPanelProps> = ({ yoloEnabled }) => {
   const [detections, setDetections] = useState<Detection[]>([]);
   const [objectCounts, setObjectCounts] = useState<Record<string, number>>({});
   const [totalDetected, setTotalDetected] = useState(0);
   const unsubscribeRef = useRef<(() => void) | null>(null);
 
-    useEffect(() => {
-      const handleDetections = (event: YoloEvent) => {
-        setDetections(event.detections || []);
-        setTotalDetected(event.count || 0);
+  useEffect(() => {
+    // Solo suscribirse a SSE si YOLO está activo
+    if (!yoloEnabled) {
+      // Limpiar suscripción anterior si existía
+      if (unsubscribeRef.current) {
+        unsubscribeRef.current();
+        unsubscribeRef.current = null;
+      }
+      setDetections([]);
+      setObjectCounts({});
+      setTotalDetected(0);
+      return;
+    }
 
-        const counts: Record<string, number> = {};
-        (event.detections || []).forEach((d: Detection) => {
-          counts[d.object] = (counts[d.object] || 0) + 1;
-        });
-        setObjectCounts(counts);
-      };
+    const handleDetections = (event: YoloEvent) => {
+      setDetections(event.detections || []);
+      setTotalDetected(event.count || 0);
 
-      unsubscribeRef.current = ApiService.subscribeDetections(handleDetections);
+      const counts: Record<string, number> = {};
+      (event.detections || []).forEach((d: Detection) => {
+        counts[d.object] = (counts[d.object] || 0) + 1;
+      });
+      setObjectCounts(counts);
+    };
 
-      return () => {
-        if (unsubscribeRef.current) {
-          unsubscribeRef.current();
-          unsubscribeRef.current = null;
-        }
-      };
-    }, []);
+    unsubscribeRef.current = ApiService.subscribeDetections(handleDetections);
+
+    return () => {
+      if (unsubscribeRef.current) {
+        unsubscribeRef.current();
+        unsubscribeRef.current = null;
+      }
+    };
+  }, [yoloEnabled]);
 
   return (
     <IonCard className="detection-panel">
@@ -78,7 +95,13 @@ export const DetectionPanel: React.FC<{}> = ({ }) => {
       </div>
 
       <div className="panel-content">
-        {totalDetected === 0 ? (
+        {!yoloEnabled ? (
+          <div className="no-detections">
+            <span className="no-det-icon">🔇</span>
+            <p>YOLO desactivado</p>
+            <small>Actívalo en el menú para ver detecciones</small>
+          </div>
+        ) : totalDetected === 0 ? (
           <div className="no-detections">
             <span className="no-det-icon">👀</span>
             <p>Esperando detecciones...</p>

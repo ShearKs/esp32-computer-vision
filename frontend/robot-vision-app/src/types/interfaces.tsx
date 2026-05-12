@@ -1,8 +1,3 @@
-export interface VideoStreamProps {
-  streamUrl: string;
-  isConnected: boolean;
-  onConnectionChange?: (connected: boolean) => void;
-}
 
 export interface NetworkProfile {
   name: string;
@@ -18,10 +13,6 @@ export interface ConfigResponse {
   active_profile: string;
 }
 
-export interface ProfilesResponse {
-  active_profile: string;
-  profiles: Record<string, NetworkProfile>;
-}
 
 export interface StreamReadyResponse {
   ready: boolean;

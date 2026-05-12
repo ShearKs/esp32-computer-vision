@@ -1,3 +1,4 @@
+import { useState } from 'react';
 import { Redirect, Route } from 'react-router-dom';
 import {
   IonApp,
@@ -20,7 +21,7 @@ import {
   setupIonicReact
 } from '@ionic/react';
 import { IonReactRouter } from '@ionic/react-router';
-import { gameController, wifi, ellipse, cogOutline, eyeOutline, eyeOffOutline, flashlightOutline, flashlightSharp  } from 'ionicons/icons';
+import { gameController, wifi, ellipse, cogOutline, eyeOutline, eyeOffOutline, flashlightOutline, flashlightSharp, refreshOutline } from 'ionicons/icons';
 import Tab1 from './pages/HomePage';
 import Tab2 from './pages/Tab2';
 import Tab3 from './pages/Tab3';
@@ -53,8 +54,23 @@ setupIonicReact();
 
 // Menú lateral con acceso al contexto
 const AppMenu: React.FC = () => {
-  const { yoloEnabled, setYoloEnabled } = useSettings();
-  const { flashActive, setFlashActive } = useSettings();
+  const { yoloEnabled, setYoloEnabled, flashActive, setFlashActive, triggerReload } = useSettings();
+  const [reloading, setReloading] = useState(false);
+
+  const handleReload = async () => {
+    setReloading(true);
+    try {
+      // 1. Pedir al backend que resetee el pipeline (esperar respuesta)
+      const result = await ApiService.reconnect();
+      console.log('🔄 Backend reconnect:', result);
+    } catch { /* seguimos igualmente */ }
+    // 2. Dar tiempo al backend para cerrar streams antiguos
+    await new Promise(r => setTimeout(r, 500));
+    // 3. Disparar recarga en el frontend (re-monta streams)
+    triggerReload();
+    // Delay visual para feedback
+    setTimeout(() => setReloading(false), 1000);
+  };
 
   return (
     <IonMenu contentId="main-content" menuId="main-menu" side="end" className="app-side-menu">
@@ -102,6 +118,27 @@ const AppMenu: React.FC = () => {
                   setFlashActive(on);
                   ApiService.setFlash(on);
                 }} />
+            </IonItem>
+          </IonList>
+        </div>
+
+        {/* Sección: Conexión */}
+        <div className="menu-section">
+          <IonNote className="menu-section-label">CONEXIÓN</IonNote>
+          <IonList lines="none" className="menu-list">
+            <IonItem className="menu-item menu-item-reload" button onClick={handleReload} disabled={reloading}>
+              <IonIcon
+                slot="start"
+                icon={refreshOutline}
+                className={`menu-icon ${reloading ? 'menu-icon-spin' : ''}`}
+                style={{ color: reloading ? '#ff9500' : '#4cd964' }}
+              />
+              <IonLabel>
+                <h3>Recargar conexión</h3>
+                <p className={reloading ? 'menu-status-reloading' : ''}>
+                  {reloading ? 'Reconectando...' : 'Reinicia cámara y streams'}
+                </p>
+              </IonLabel>
             </IonItem>
           </IonList>
         </div>

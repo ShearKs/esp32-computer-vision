@@ -65,6 +65,28 @@ def get_latest_detections():
     with _detections_lock:
         return list(_latest_detections)
 
+# ─── FrameGrabber activo (global para poder matarlo en reconnect) ───
+_active_grabber = None
+_grabber_lock = threading.Lock()
+
+def force_release_grabber():
+    """Libera el FrameGrabber activo si existe.
+    Esto cierra la conexión HTTP al ESP32 y permite que un nuevo
+    FrameGrabber se conecte (el ESP32 solo admite 1 cliente de stream).
+    """
+    global _active_grabber
+    with _grabber_lock:
+        if _active_grabber is not None:
+            print("Forzando cierre del FrameGrabber activo...")
+            try:
+                _active_grabber.release()
+            except Exception as e:
+                print(f"⚠️ Error al cerrar FrameGrabber: {e}")
+            _active_grabber = None
+            print("FrameGrabber liberado...")
+        else:
+            print("No hay FrameGrabber activo que liberar")
+
 # ─── Colores por categoría de objeto ───
 CATEGORY_COLORS = {
     "person":     (0, 255, 100),   # Verde
@@ -177,7 +199,7 @@ class FrameGrabber:
     Usa urllib en vez de cv2.VideoCapture porque este último
     se cuelga indefinidamente con streams ESP32-CAM.
     """
-    def __init__(self, stream_url: str, timeout: int = 10, max_retries: int = 5):
+    def __init__(self, stream_url: str, timeout: int = 5, max_retries: int = 3):
         self.stream_url = stream_url
         self.timeout = timeout
         self._frame = None
@@ -200,7 +222,7 @@ class FrameGrabber:
             except Exception as e:
                 print(f"FrameGrabber intento {attempt + 1}/{max_retries} fallo: {e}")
                 if attempt < max_retries - 1:
-                    time.sleep(2)
+                    time.sleep(1)
                 else:
                     print(f"FrameGrabber: no se pudo conectar tras {max_retries} intentos")
                     self._opened = False
@@ -334,9 +356,15 @@ def stream_yolo_frames(stream_url: str, confidence: float = None):
     - YOLO solo cada N frames (los intermedios reusan boxes cacheados)
     - Resolución reducida para inferencia
     """
-    global _latest_detections
+    global _latest_detections, _active_grabber
 
     conf_threshold = confidence if confidence is not None else CONFIDENCE_THRESHOLD
+
+    # Matar cualquier FrameGrabber anterior antes de crear uno nuevo
+    # (el ESP32-CAM solo admite 1 cliente de stream simultáneo)
+    force_release_grabber()
+    # Dar tiempo al ESP32 para liberar el socket
+    time.sleep(0.3)
 
     grabber = FrameGrabber(stream_url)
     if not grabber.is_opened:
@@ -346,6 +374,10 @@ def stream_yolo_frames(stream_url: str, confidence: float = None):
                b'Content-Type: image/jpeg\r\n\r\n' + jpeg.tobytes() + b'\r\n')
         grabber.release()
         return
+
+    # Registrar como grabber activo
+    with _grabber_lock:
+        _active_grabber = grabber
 
     grabber.start()
     # Esperar al primer frame
@@ -359,10 +391,15 @@ def stream_yolo_frames(stream_url: str, confidence: float = None):
 
     try:
         while True:
+            # Si el grabber fue liberado externamente (reconnect), salir
+            if not grabber._running and total_frames > 0:
+                print("FrameGrabber detenido externamente, cerrando stream...")
+                break
+
             ret, frame = grabber.read()
             if not ret:
                 consecutive_fails += 1
-                if consecutive_fails > 100:  # ~2s sin frames
+                if consecutive_fails > 50:  # ~1s sin frames
                     print("Demasiados fallos, cerrando stream...")
                     # Enviar frame de "desconectado" para que el frontend lo vea
                     disconnect_frame = _create_error_frame("Camara desconectada - reconectando...")
@@ -408,6 +445,10 @@ def stream_yolo_frames(stream_url: str, confidence: float = None):
                    b'Content-Type: image/jpeg\r\n\r\n' + jpeg.tobytes() + b'\r\n')
 
     finally:
+        # Limpiar referencia global
+        with _grabber_lock:
+            if _active_grabber is grabber:
+                _active_grabber = None
         grabber.release()
 
 

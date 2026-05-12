@@ -1,5 +1,5 @@
 // src/components/DetectionStream.tsx
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { IonCard, IonSpinner, IonBadge, IonIcon } from '@ionic/react';
 import { alertCircleOutline, refresh } from 'ionicons/icons';
 import { ApiService } from '../services/api';
@@ -12,6 +12,8 @@ interface DetectionStreamProps {
 export const DetectionStream: React.FC<DetectionStreamProps> = ({ confidence }) => {
   const [status, setStatus] = useState<'loading' | 'connected' | 'error'>('loading');
   const [retryCount, setRetryCount] = useState(0);
+  const imgRef = useRef<HTMLImageElement>(null);
+  const loadTimeoutRef = useRef<ReturnType<typeof setTimeout>>(undefined);
 
   const streamUrl = ApiService.getYoloStreamUrl(confidence);
   const [currentUrl, setCurrentUrl] = useState(streamUrl);
@@ -22,19 +24,51 @@ export const DetectionStream: React.FC<DetectionStreamProps> = ({ confidence }) 
     setRetryCount(0);
   }, [streamUrl]);
 
-  const handleLoad = () => setStatus('connected');
+  // Fallback: si onLoad no dispara en 6s pero la imagen tiene tamaño, forzar 'connected'
+  useEffect(() => {
+    if (status !== 'loading') return;
 
-  const handleError = () => {
-    if (retryCount < 30) {
+    loadTimeoutRef.current = setTimeout(() => {
+      const img = imgRef.current;
+      if (img && img.naturalWidth > 0 && img.naturalHeight > 0) {
+        console.log('🎥 DetectionStream: onLoad no disparó, pero la imagen tiene contenido → connected');
+        setStatus('connected');
+      }
+    }, 6000);
+
+    // También hacer polling más agresivo cada 1.5s
+    const pollInterval = setInterval(() => {
+      const img = imgRef.current;
+      if (img && img.naturalWidth > 0 && img.naturalHeight > 0) {
+        console.log('🎥 DetectionStream: imagen detectada via polling → connected');
+        setStatus('connected');
+        clearInterval(pollInterval);
+      }
+    }, 1500);
+
+    return () => {
+      if (loadTimeoutRef.current) clearTimeout(loadTimeoutRef.current);
+      clearInterval(pollInterval);
+    };
+  }, [status, currentUrl]);
+
+  const handleLoad = useCallback(() => {
+    if (loadTimeoutRef.current) clearTimeout(loadTimeoutRef.current);
+    setStatus('connected');
+  }, []);
+
+  const handleError = useCallback(() => {
+    if (loadTimeoutRef.current) clearTimeout(loadTimeoutRef.current);
+    if (retryCount < 10) {
       setTimeout(() => {
         setRetryCount(prev => prev + 1);
         const separator = streamUrl.includes('?') ? '&' : '?';
         setCurrentUrl(`${streamUrl}${separator}_retry=${Date.now()}`);
-      }, 2000); // esperar 2s entre reintentos
+      }, 1500);
     } else {
       setStatus('error');
     }
-  };
+  }, [retryCount, streamUrl]);
 
   const handleRetry = () => {
     setRetryCount(0);
@@ -61,7 +95,7 @@ export const DetectionStream: React.FC<DetectionStreamProps> = ({ confidence }) 
         {status === 'loading' && (
           <div className="detection-overlay loading-overlay">
             <IonSpinner name="crescent" />
-            <p>{retryCount > 0 ? `Reintentando... (${retryCount}/30)` : 'Cargando modelo YOLO...'}</p>
+            <p>{retryCount > 0 ? `Reintentando... (${retryCount}/10)` : 'Cargando modelo YOLO...'}</p>
             <small>Esto puede tardar unos segundos</small>
           </div>
         )}
@@ -80,6 +114,7 @@ export const DetectionStream: React.FC<DetectionStreamProps> = ({ confidence }) 
         )}
 
         <img
+          ref={imgRef}
           src={currentUrl}
           alt="YOLO Detection Stream"
           className="detection-stream-img"

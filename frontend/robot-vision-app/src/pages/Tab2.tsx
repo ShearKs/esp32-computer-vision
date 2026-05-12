@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { Capacitor } from '@capacitor/core';
 import {
   IonContent, IonHeader, IonPage, IonTitle, IonToolbar,
@@ -17,7 +17,7 @@ import './Tab2.css';
 const Tab2: React.FC = () => {
   // Perfiles: se obtienen del backend (fuente única de verdad)
   const [backendProfiles, setBackendProfiles] = useState<Record<string, { backend_ip: string; esp32_ip: string }>>({});
-  const [activeProfile, setActiveProfile] = useState<string | null>(ApiService.getConnectedProfile());
+  const [activeProfile, setActiveProfile] = useState<string | null>(null);
   const [serverIp, setServerIp] = useState<string | null>(null);
   const [manualIp, setManualIp] = useState('');
   const [connecting, setConnecting] = useState(false);
@@ -30,8 +30,6 @@ const Tab2: React.FC = () => {
   const [esp32Port, setEsp32Port] = useState('8080');
   const [esp32Status, setEsp32Status] = useState<{ ok: boolean; msg: string } | null>(null);
   const [settingEsp32, setSettingEsp32] = useState(false);
-  // Flag para saber si el usuario está editando los campos de cámara manualmente
-  const [esp32Dirty, setEsp32Dirty] = useState(false);
 
   // Editor de perfiles
   const [showProfileEditor, setShowProfileEditor] = useState(false);
@@ -41,6 +39,9 @@ const Tab2: React.FC = () => {
   const [diagLogs, setDiagLogs] = useState<string[]>([]);
   const [diagRunning, setDiagRunning] = useState(false);
 
+  // Flag: datos iniciales de cámara ya cargados (solo 1 vez)
+  const initialDataLoaded = useRef(false);
+
   // Obtener lista visible de perfiles (solo del backend)
   const displayProfiles: NetworkProfile[] = Object.keys(backendProfiles).map(name => ({
     name,
@@ -48,15 +49,18 @@ const Tab2: React.FC = () => {
     esp32_ip: backendProfiles[name].esp32_ip
   }));
 
+  // Carga completa: config + perfiles + server info. Solo se llama al montar y tras acciones manuales.
   const loadBackendData = async () => {
     try {
       const config = await ApiService.getConfig();
       setEsp32Url(config.esp32_url);
       setActiveProfile(config.active_profile);
-      // Solo actualizar los inputs si el usuario NO los está editando
-      if (!esp32Dirty) {
+
+      // Solo poner IP/puerto en los inputs la PRIMERA VEZ
+      if (!initialDataLoaded.current) {
         setEsp32Ip(config.esp32_ip);
         setEsp32Port(String(config.stream_port));
+        initialDataLoaded.current = true;
       }
 
       const profiles = await ApiService.fetchBackendProfiles();
@@ -64,7 +68,6 @@ const Tab2: React.FC = () => {
         setBackendProfiles(profiles);
       }
 
-      // Obtener IP real del servidor
       try {
         const info = await fetch(`${ApiService.getBaseUrl()}/api/server-info`).then(r => r.json());
         setServerIp(info.server_ip);
@@ -73,20 +76,22 @@ const Tab2: React.FC = () => {
   };
 
   useEffect(() => {
-    const check = async () => {
+    // Carga inicial: health check + datos completos
+    const init = async () => {
       const ok = await ApiService.healthCheck();
-      setStatus({
-        ok,
-        msg: ok ? 'Conectado al backend' : 'Sin conexión'
-      });
+      setStatus({ ok, msg: ok ? 'Conectado al backend' : 'Sin conexión' });
       setBackendUrl(ApiService.getBaseUrl());
-
-      if (ok) {
-        await loadBackendData();
-      }
+      if (ok) await loadBackendData();
     };
-    check();
-    const timer = setInterval(check, 5000);
+    init();
+
+    // Polling: SOLO health check (no recargar datos de cámara)
+    const timer = setInterval(async () => {
+      const ok = await ApiService.healthCheck();
+      setStatus({ ok, msg: ok ? 'Conectado al backend' : 'Sin conexión' });
+      setBackendUrl(ApiService.getBaseUrl());
+    }, 5000);
+
     return () => clearInterval(timer);
   }, []);
 
@@ -96,6 +101,8 @@ const Tab2: React.FC = () => {
     const ok = await ApiService.connectToProfile(name);
     if (ok) {
       await ApiService.setProfile(name);
+      // Tras cambio de perfil, recargar datos y permitir actualizar inputs
+      initialDataLoaded.current = false;
       await loadBackendData();
     }
     setConnecting(false);
@@ -119,6 +126,7 @@ const Tab2: React.FC = () => {
       setActiveProfile(null);
       setBackendUrl(ApiService.getBaseUrl());
       setStatus({ ok: true, msg: `Conectado a ${ip}` });
+      initialDataLoaded.current = false;
       await loadBackendData();
     } else {
       setStatus({ ok: false, msg: `No hay backend en ${ip}` });
@@ -133,9 +141,12 @@ const Tab2: React.FC = () => {
     const ok = await ApiService.setEsp32Ip(ip, parseInt(esp32Port) || 8080);
     setSettingEsp32(false);
     if (ok) {
-      setEsp32Dirty(false); // Tras aplicar, volver a sincronizar con el backend
       setEsp32Status({ ok: true, msg: `Cámara configurada: ${ip}:${esp32Port}` });
-      await loadBackendData();
+      // Recargar URL de cámara actualizada (pero NO sobreescribir inputs)
+      try {
+        const config = await ApiService.getConfig();
+        setEsp32Url(config.esp32_url);
+      } catch {}
     } else {
       setEsp32Status({ ok: false, msg: `Error al configurar cámara ${ip}` });
     }
@@ -171,8 +182,6 @@ const Tab2: React.FC = () => {
 
     log(`📱 Plataforma: ${Capacitor.isNativePlatform() ? 'Nativa (Android/iOS)' : 'Web'}`);
     log(`🌐 Base URL actual: ${ApiService.getBaseUrl()}`);
-    log(`🔗 window.location: ${window.location.href}`);
-    log(`📋 Protocolo: ${window.location.protocol}`);
 
     log('--- Test 1: Health Check ---');
     const baseUrl = ApiService.getBaseUrl();
@@ -199,25 +208,6 @@ const Tab2: React.FC = () => {
       log(`   Backend IP: ${config.backend_ip}, Perfil: ${config.active_profile}`);
     } catch (err: any) {
       log(`❌ config → ${err.message}`);
-    }
-
-    log('--- Test 4: Server Info ---');
-    try {
-      const info = await fetch(`${baseUrl}/api/server-info`).then(r => r.json());
-      log(`✅ server-info → IP: ${info.server_ip}, Perfil: ${info.active_profile}`);
-      log(`   ESP32 URL: ${info.esp32_url}`);
-    } catch (err: any) {
-      log(`❌ server-info → ${err.message}`);
-    }
-
-    log('--- Test 5: Perfiles del Backend ---');
-    try {
-      const profiles = await ApiService.fetchBackendProfiles();
-      for (const [name, p] of Object.entries(profiles)) {
-        log(`   📋 ${name}: backend=${p.backend_ip}, esp32=${p.esp32_ip}`);
-      }
-    } catch (err: any) {
-      log(`❌ profiles → ${err.message}`);
     }
 
     log('--- Diagnóstico completado ---');
@@ -342,8 +332,7 @@ const Tab2: React.FC = () => {
           <IonInput
             placeholder="192.168.1.132"
             value={esp32Ip}
-            onIonInput={e => { setEsp32Ip(e.detail.value!); setEsp32Dirty(true); }}
-            onIonFocus={() => setEsp32Dirty(true)}
+            onIonInput={e => setEsp32Ip(e.detail.value!)}
             className="manual-ip-input"
             clearInput
             style={{ flex: 2 }}
@@ -351,8 +340,7 @@ const Tab2: React.FC = () => {
           <IonInput
             placeholder="8080"
             value={esp32Port}
-            onIonInput={e => { setEsp32Port(e.detail.value!); setEsp32Dirty(true); }}
-            onIonFocus={() => setEsp32Dirty(true)}
+            onIonInput={e => setEsp32Port(e.detail.value!)}
             className="manual-ip-input"
             clearInput
             style={{ flex: 1, maxWidth: 100 }}

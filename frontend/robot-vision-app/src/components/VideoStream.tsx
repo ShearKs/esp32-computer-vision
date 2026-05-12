@@ -1,5 +1,5 @@
 // src/components/VideoStream.tsx
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { IonCard, IonSpinner, IonBadge, IonIcon } from '@ionic/react';
 import { alertCircleOutline, refresh } from 'ionicons/icons';
 import { ApiService } from '../services/api';
@@ -8,6 +8,8 @@ import './VideoStream.css';
 export const VideoStream: React.FC = () => {
   const [status, setStatus] = useState<'loading' | 'connected' | 'error'>('loading');
   const [retryCount, setRetryCount] = useState(0);
+  const imgRef = useRef<HTMLImageElement>(null);
+  const loadTimeoutRef = useRef<ReturnType<typeof setTimeout>>(undefined);
 
   // Usar el proxy del backend en vez de conectar directamente al ESP32.
   // Esto evita problemas de CORS y funciona en Android nativo.
@@ -20,18 +22,49 @@ export const VideoStream: React.FC = () => {
     setRetryCount(0);
   }, [rawStreamUrl]);
 
-  const handleLoad = () => setStatus('connected');
+  // Fallback: si onLoad no dispara pero la imagen tiene contenido, forzar 'connected'
+  useEffect(() => {
+    if (status !== 'loading') return;
 
-  const handleError = () => {
-    if (retryCount < 30) {
+    loadTimeoutRef.current = setTimeout(() => {
+      const img = imgRef.current;
+      if (img && img.naturalWidth > 0 && img.naturalHeight > 0) {
+        console.log('VideoStream: onLoad no disparó, pero la imagen tiene contenido → connected');
+        setStatus('connected');
+      }
+    }, 5000);
+
+    const pollInterval = setInterval(() => {
+      const img = imgRef.current;
+      if (img && img.naturalWidth > 0 && img.naturalHeight > 0) {
+        console.log('VideoStream: imagen detectada via polling → connected');
+        setStatus('connected');
+        clearInterval(pollInterval);
+      }
+    }, 1500);
+
+    return () => {
+      if (loadTimeoutRef.current) clearTimeout(loadTimeoutRef.current);
+      clearInterval(pollInterval);
+    };
+  }, [status, currentUrl]);
+
+  const handleLoad = useCallback(() => {
+    if (loadTimeoutRef.current) clearTimeout(loadTimeoutRef.current);
+    setStatus('connected');
+  }, []);
+
+  const handleError = useCallback(() => {
+    if (loadTimeoutRef.current) clearTimeout(loadTimeoutRef.current);
+    if (retryCount < 10) {
       setTimeout(() => {
         setRetryCount(prev => prev + 1);
         setCurrentUrl(`${rawStreamUrl}?_retry=${Date.now()}`);
-      }, 2000);
+      }, 1500);
     } else {
       setStatus('error');
     }
-  };
+  }, [retryCount, rawStreamUrl]);
 
   const handleRetry = () => {
     setRetryCount(0);
@@ -50,7 +83,7 @@ export const VideoStream: React.FC = () => {
         {status === 'loading' && (
           <div className="overlay loading-overlay">
             <IonSpinner name="crescent" />
-            <p>{retryCount > 0 ? `Reintentando... (${retryCount}/30)` : 'Conectando...'}</p>
+            <p>{retryCount > 0 ? `Reintentando... (${retryCount}/10)` : 'Conectando...'}</p>
           </div>
         )}
 
@@ -68,6 +101,7 @@ export const VideoStream: React.FC = () => {
         )}
 
         <img
+          ref={imgRef}
           src={currentUrl}
           alt="Camera Stream"
           className="stream-img"
