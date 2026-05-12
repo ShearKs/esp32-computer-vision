@@ -6,7 +6,7 @@ import {
   IonSpinner, IonMenuButton, IonButtons, IonButton
 } from '@ionic/react';
 import { VideoStream } from '../components/VideoStream';
-import { JoystickControl } from '../components/JoystickControl';
+import { JoystickControl,Direction } from '../components/JoystickControl';
 import { DetectionStream } from '../components/DetectionStream';
 import { DetectionPanel } from '../components/DetectionPanel';
 import { ApiService } from '../services/api';
@@ -14,8 +14,12 @@ import { useSettings } from '../context/SettingsContext';
 import './HomePage.css';
 
 const Home: React.FC = () => {
-  const handleMove = (direction: string, speed: number, x: number, y: number) => {
-    console.log(`Mover: ${direction} | Velocidad: ${speed}%`);
+  const handleMove = async(direction: Direction, speed: number, x: number, y: number) => {
+
+   // Para debugging... 
+   console.log(`Mover: ${direction} | Velocidad: ${speed}%`);
+
+    await ApiService.controlRobot(direction, speed)
   };
 
   const handleStop = () => console.log('🛑 Stop');

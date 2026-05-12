@@ -1,16 +1,25 @@
 // src/components/JoystickControl.tsx
 import React, { useState, useRef, useCallback, useEffect } from 'react';
+import { ApiService } from '../services/api';
 import { IonCard, IonCardHeader, IonCardTitle, IonCardSubtitle, IonCardContent } from '@ionic/react';
 import './JoystickControl.css';
 
 interface JoystickControlProps {
-    onMove: (direction: string, speed: number, x: number, y: number) => void;
+    onMove: (direction: Direction, speed: number, x: number, y: number) => void;
     onStop: () => void;
+    onError?: (error : Error) => void;
 }
 
-type Direction = 'forward' | 'backward' | 'left' | 'right' | 'stop';
+export type Direction = 'forward' | 'backward' | 'left' | 'right' | 'stop';
+
+const JOYSTICK_RADIUS = 55; // radio de la base en px
+const STICK_RADIUS = 26;    // radio de la bola (más grande que el borde = sobresale)
+const DEAD_ZONE = 0.15;
+const THROTTLE_MS = 100; // ms entre envíos de comandos (para no saturar la red)
 
 export const JoystickControl: React.FC<JoystickControlProps> = ({ onMove, onStop }) => {
+
+    const lastCommandRef = useRef(0);
 
     const [speed, setSpeed] = useState(0);
     const [direction, setDirection] = useState<Direction>('stop');
@@ -20,10 +29,6 @@ export const JoystickControl: React.FC<JoystickControlProps> = ({ onMove, onStop
 
     const joystickRef = useRef<HTMLDivElement>(null);
     const isDraggingRef = useRef(false);
-
-    const JOYSTICK_RADIUS = 55; // radio de la base en px
-    const STICK_RADIUS = 26;    // radio de la bola (más grande que el borde = sobresale)
-    const DEAD_ZONE = 0.15;
 
     // ─── Joystick Touch/Mouse Handling ───
 
@@ -67,6 +72,13 @@ export const JoystickControl: React.FC<JoystickControlProps> = ({ onMove, onStop
     }, []);
 
     const processJoystickInput = useCallback((clientX: number, clientY: number) => {
+
+        // Fecha Actual
+        const now = Date.now();
+        //
+        if (now - lastCommandRef.current < THROTTLE_MS) return;
+        lastCommandRef.current = now;
+
         const { x, y } = getRelativePosition(clientX, clientY);
         const { sx, sy, dir, mag } = snapToCardinal(x, y);
         // Curva progresiva: mag^2.5 → cuesta mucho llegar a máxima velocidad
@@ -78,9 +90,9 @@ export const JoystickControl: React.FC<JoystickControlProps> = ({ onMove, onStop
         setDirection(dir);
 
         if (dir !== 'stop') {
-            onMove(dir, computedSpeed, sx, sy);
+            Promise.resolve(onMove(dir, computedSpeed, sx, sy)).catch(console.warn);
         } else {
-            onStop();
+            Promise.resolve(onStop()).catch(console.warn);
         }
     }, [getRelativePosition, snapToCardinal, onMove, onStop]);
 
@@ -148,7 +160,7 @@ export const JoystickControl: React.FC<JoystickControlProps> = ({ onMove, onStop
         setActiveButton(dir);
         setDirection(dir);
         setSpeed(15); // velocidad suave para cambios de dirección
-        onMove(dir, 15, 
+        onMove(dir, 15,
             dir === 'left' ? -1 : dir === 'right' ? 1 : 0,
             dir === 'forward' ? 1 : dir === 'backward' ? -1 : 0
         );

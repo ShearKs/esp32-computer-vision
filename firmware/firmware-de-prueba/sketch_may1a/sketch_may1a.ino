@@ -61,6 +61,29 @@ static const char *_STREAM_PART = "Content-Type: image/jpeg\r\nContent-Length: %
 httpd_handle_t camera_httpd = NULL;
 httpd_handle_t stream_httpd = NULL;
 
+
+
+////// AÑADIR ESTO POR SI SE CAE EL WIFI ////////////
+// Variables globales
+// unsigned long lastCommandTime = 0;
+// const unsigned long COMMAND_TIMEOUT = 500; // 500ms sin comando → STOP
+
+// // En action_handler(), al recibir cualquier comando:
+// lastCommandTime = millis(); // Resetea el timer
+
+// // En loop():
+// void loop() {
+//   server.handleClient();
+  
+//   // Timeout de seguridad
+//   if (millis() - lastCommandTime > COMMAND_TIMEOUT) {
+//     stopMotors(); // Tu función que pone todos los pines en LOW
+//     lastCommandTime = millis(); // Evita spam de stop
+//   }
+// }
+
+
+
 void startCameraServer();
 
 void setup() {

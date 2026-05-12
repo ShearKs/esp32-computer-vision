@@ -13,12 +13,12 @@
             "state": {
               "type": "markdown",
               "state": {
-                "file": "GUIA-PUESTA-MARCHA.md",
+                "file": "COMANDOS.md",
                 "mode": "source",
                 "source": false
               },
               "icon": "lucide-file",
-              "title": "GUIA-PUESTA-MARCHA"
+              "title": "COMANDOS"
             }
           }
         ]
@@ -185,10 +185,10 @@
   },
   "active": "295ce4445bc2192c",
   "lastOpenFiles": [
+    "GUIA-PUESTA-MARCHA.md",
     "OPTIMIZACION-YOLO.md",
     "FRONTEND.md",
     "COMANDOS.md",
-    "GUIA-PUESTA-MARCHA.md",
     "API-REFERENCE.md",
     "Estructura del Proyecto.md",
     "Fase preconcibida del proyecto - Ideas del profesor.md",

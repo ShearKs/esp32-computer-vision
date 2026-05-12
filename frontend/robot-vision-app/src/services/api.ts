@@ -16,7 +16,9 @@ let _baseUrl = 'http://localhost:8000';
 const hostname = window.location.hostname;
 const isNative = Capacitor.isNativePlatform();
 
+// Para comprobar si estamos en móvil o web
 if (isNative) {
+  // En móvil, intentamos usar la IP guardada en localStorage (si el usuario se conectó antes)
   const stored = localStorage.getItem(STORAGE_KEY);
   if (stored) {
     _baseUrl = `http://${stored}:${BACKEND_PORT}`;
@@ -27,6 +29,7 @@ if (isNative) {
   _baseUrl = `http://${hostname}:${BACKEND_PORT}`;
 }
 
+// Intento rápido a una URL para ver si responde (usado en escaneo de red)
 function tryFetch(url: string, timeoutMs = 3000): Promise<boolean> {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
@@ -226,6 +229,7 @@ export const ApiService = {
     return `${base}/api/stream/raw`;
   },
 
+  // Comprueba si el stream de detección está listo (la primera conexión puede tardar un poco)
   async isStreamReady(): Promise<StreamReadyResponse> {
     const base = ApiService.getBaseUrl();
     const res = await fetch(`${base}/api/stream-ready`);
@@ -233,6 +237,7 @@ export const ApiService = {
     return res.json();
   },
 
+  // Realiza una detección puntual (usando el stream configurado o una URL alternativa)
   async detectObjects(streamUrl?: string): Promise<DetectionResponse> {
     const base = ApiService.getBaseUrl();
     const url = streamUrl
@@ -262,6 +267,14 @@ export const ApiService = {
       return false;
     }
   },
+
+  // Método para poder mover al coche ESP-32...
+  async controlRobot(direction: string, speed : number): Promise<void>{
+    const base = ApiService.getBaseUrl();
+    const res = await fetch(`${base}/api/move?direction=${direction}&speed=${speed}`)
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+  },
+
 
   subscribeDetections(callback: DetectionsCallback): () => void {
     const base = ApiService.getBaseUrl();

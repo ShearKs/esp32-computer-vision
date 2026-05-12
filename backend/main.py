@@ -2,9 +2,11 @@ import asyncio
 import json
 import time
 import urllib.request
+import httpx
 from fastapi import FastAPI, BackgroundTasks, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
+import requests
 import uvicorn
 from config import settings, NETWORK_PROFILES, ACTIVE_PROFILE, save_active_config, save_profiles, load_profiles, PROFILES_FILE, get_local_ip
 from core_pipeline import run_detection_session, stream_yolo_frames, get_latest_detections, force_release_grabber
@@ -327,7 +329,7 @@ async def raw_stream_proxy():
                     buf = buf[-100000:]
 
         except Exception as e:
-            print(f"⚠️ Proxy stream error: {e}")
+            print(f"Proxy stream error: {e}")
             # Enviar un frame de error
             import cv2
             import numpy as np
@@ -453,6 +455,33 @@ async def set_flash(state: str = Query(...)):
             await asyncio.sleep(0.5)
 
     raise HTTPException(
-        status_code=502,
-        detail=f"Error comunicando con la cámara tras 3 intentos: {str(last_error)}"
+        status_code = 502,
+        detail = f"Error comunicando con la cámara tras 3 intentos: {str(last_error)}"
     )
+
+# ═══════════════════════════════════════════════════════
+# PARA EL MOVIMIENTO DEL COCHE
+# ═══════════════════════════════════════════════════════
+
+ALLOWED_DIRECTIONS = {"forward", "backward", "left", "right", "stop"}
+@app.get("/api/move")
+async def move_esp32_car(direction : str, speed : int = 125):
+    """Frontend → FastAPI → ESP32"""
+     
+    # Primero realizamos una pequeña validación para que el coche no es vuelva loco...
+    if direction not in ALLOWED_DIRECTIONS:
+        raise HTTPException(400, "Dirección no válida")
+
+    esp_dir_url = f"http://{settings.esp32_ip}/action?go={direction}"
+    if direction != "stop":
+        esp_dir_url += f"&speed={speed}"
+
+    # Enviamos la dirección al ESP32 para que se mueva buuuuum buuuuuuuum 🏎️🏎️🏎️🏎️
+    try:
+        await asyncio.to_thread(requests.get, esp_dir_url, timeout=1.0)
+    except requests.RequestException as e:
+        raise HTTPException(503, f"ESP32 no responde: {str(e)}")
+    
+    return {"status": "ok", "command": direction, "speed": speed if direction != "stop" else 0}
+
+
