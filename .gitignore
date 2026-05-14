@@ -12,6 +12,8 @@ backend/logs/*.json
 # Configuración local sensible
 backend/.env
 
+/scripts/dataset/
+
 # Node/Frontend
 frontend/node_modules/
 frontend/.next/

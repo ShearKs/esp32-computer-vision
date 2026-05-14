@@ -27,23 +27,27 @@ _DEFAULTS = {
     "jpeg_quality": 50, "mjpeg_width": 480
 }
 
-try:
-    with open(_PROFILES_PATH, "r", encoding="utf-8") as f:
-        _config = json.load(f)
-    MODEL_NAME = _config.get("active_model", "yolov8s")
-    _profiles = _config.get("profiles", {})
-    PROFILE = _profiles.get(MODEL_NAME, _DEFAULTS)
-except (FileNotFoundError, json.JSONDecodeError) as e:
-    print(f"No se pudo leer model_profiles.json ({e}), usando defaults")
-    MODEL_NAME = "yolov8s"
-    PROFILE = _DEFAULTS
+def _load_model_config():
+    """Lee model_profiles.json y devuelve (model_name, profile_dict, all_profiles)."""
+    try:
+        with open(_PROFILES_PATH, "r", encoding="utf-8") as f:
+            _config = json.load(f)
+        name = _config.get("active_model", "yolov8s")
+        profiles = _config.get("profiles", {})
+        profile = profiles.get(name, _DEFAULTS)
+        return name, profile, profiles
+    except (FileNotFoundError, json.JSONDecodeError) as e:
+        print(f"No se pudo leer model_profiles.json ({e}), usando defaults")
+        return "yolov8s", _DEFAULTS, {}
 
-# Aplicar configuración del perfil
-YOLO_IMGSZ = PROFILE.get("imgsz", _DEFAULTS["imgsz"])
-YOLO_EVERY_N_FRAMES = PROFILE.get("skip_frames", _DEFAULTS["skip_frames"])
-CONFIDENCE_THRESHOLD = PROFILE.get("confidence", _DEFAULTS["confidence"])
-JPEG_QUALITY = PROFILE.get("jpeg_quality", _DEFAULTS["jpeg_quality"])
-MJPEG_MAX_WIDTH = PROFILE.get("mjpeg_width", _DEFAULTS["mjpeg_width"])
+# ─── Variables mutables (se actualizan en switch_model) ───
+MODEL_NAME, _PROFILE, _ALL_PROFILES = _load_model_config()
+
+YOLO_IMGSZ = _PROFILE.get("imgsz", _DEFAULTS["imgsz"])
+YOLO_EVERY_N_FRAMES = _PROFILE.get("skip_frames", _DEFAULTS["skip_frames"])
+CONFIDENCE_THRESHOLD = _PROFILE.get("confidence", _DEFAULTS["confidence"])
+JPEG_QUALITY = _PROFILE.get("jpeg_quality", _DEFAULTS["jpeg_quality"])
+MJPEG_MAX_WIDTH = _PROFILE.get("mjpeg_width", _DEFAULTS["mjpeg_width"])
 
 # Cargar modelo
 MODEL = YOLO(f"models/{MODEL_NAME}.pt")
@@ -55,6 +59,70 @@ if USE_HALF:
 
 print(f"Modelo: {MODEL_NAME} | imgsz={YOLO_IMGSZ} | skip={YOLO_EVERY_N_FRAMES} "
       f"| conf={CONFIDENCE_THRESHOLD} | jpeg_q={JPEG_QUALITY} | mjpeg_w={MJPEG_MAX_WIDTH}")
+
+# Lock para proteger el cambio de modelo en caliente
+_model_switch_lock = threading.Lock()
+
+def switch_model(new_model_name: str) -> dict:
+    """Cambia el modelo YOLO en caliente sin reiniciar el servidor.
+    
+    1. Verifica que el .pt existe
+    2. Actualiza model_profiles.json
+    3. Carga el nuevo modelo en memoria
+    4. Actualiza todos los parámetros de inferencia
+    
+    Returns: dict con info del modelo cargado o error
+    """
+    global MODEL, MODEL_NAME, YOLO_IMGSZ, YOLO_EVERY_N_FRAMES
+    global CONFIDENCE_THRESHOLD, JPEG_QUALITY, MJPEG_MAX_WIDTH
+
+    model_path = os.path.join(os.path.dirname(__file__), "models", f"{new_model_name}.pt")
+    if not os.path.exists(model_path):
+        return {"ok": False, "error": f"Modelo '{new_model_name}.pt' no encontrado en models/"}
+
+    with _model_switch_lock:
+        print(f"🔄 Cambiando modelo: {MODEL_NAME} → {new_model_name}...")
+
+        # 1. Actualizar model_profiles.json
+        try:
+            with open(_PROFILES_PATH, "r", encoding="utf-8") as f:
+                config = json.load(f)
+            config["active_model"] = new_model_name
+            with open(_PROFILES_PATH, "w", encoding="utf-8") as f:
+                json.dump(config, f, indent=2, ensure_ascii=False)
+        except Exception as e:
+            print(f"⚠️ No se pudo actualizar model_profiles.json: {e}")
+
+        # 2. Cargar nuevo modelo
+        try:
+            new_model = YOLO(model_path)
+            MODEL = new_model
+            MODEL_NAME = new_model_name
+        except Exception as e:
+            return {"ok": False, "error": f"Error al cargar modelo: {e}"}
+
+        # 3. Actualizar parámetros de inferencia desde el perfil
+        _, profile, _ = _load_model_config()
+        YOLO_IMGSZ = profile.get("imgsz", _DEFAULTS["imgsz"])
+        YOLO_EVERY_N_FRAMES = profile.get("skip_frames", _DEFAULTS["skip_frames"])
+        CONFIDENCE_THRESHOLD = profile.get("confidence", _DEFAULTS["confidence"])
+        JPEG_QUALITY = profile.get("jpeg_quality", _DEFAULTS["jpeg_quality"])
+        MJPEG_MAX_WIDTH = profile.get("mjpeg_width", _DEFAULTS["mjpeg_width"])
+
+        print(f"✅ Modelo cambiado a: {MODEL_NAME} | imgsz={YOLO_IMGSZ} | skip={YOLO_EVERY_N_FRAMES} "
+              f"| conf={CONFIDENCE_THRESHOLD} | jpeg_q={JPEG_QUALITY} | mjpeg_w={MJPEG_MAX_WIDTH}")
+
+        return {
+            "ok": True,
+            "model": MODEL_NAME,
+            "imgsz": YOLO_IMGSZ,
+            "skip_frames": YOLO_EVERY_N_FRAMES,
+            "confidence": CONFIDENCE_THRESHOLD
+        }
+
+def get_active_model_name() -> str:
+    """Devuelve el nombre del modelo activo."""
+    return MODEL_NAME
 
 # ─── Estado compartido para SSE ───
 _latest_detections = []
@@ -81,7 +149,7 @@ def force_release_grabber():
             try:
                 _active_grabber.release()
             except Exception as e:
-                print(f"⚠️ Error al cerrar FrameGrabber: {e}")
+                print(f"Error al cerrar FrameGrabber..: {e}")
             _active_grabber = None
             print("FrameGrabber liberado...")
         else:

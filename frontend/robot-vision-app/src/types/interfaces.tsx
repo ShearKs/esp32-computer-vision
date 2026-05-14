@@ -37,5 +37,12 @@ export interface YoloEvent {
   detections: Detection[];
   count: number;
 }
+export type Direction = 'forward' | 'backward' | 'left' | 'right' | 'stop';
+export interface JoystickControlProps {
+    onMove: (direction: Direction, speed: number, x: number, y: number) => void;
+    onStop: () => void;
+    onError?: (error: Error) => void;
+}
+
 
 export type DetectionsCallback = (event: YoloEvent) => void;

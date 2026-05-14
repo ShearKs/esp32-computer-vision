@@ -3,13 +3,14 @@ import json
 import time
 import urllib.request
 import httpx
+import logging
 from fastapi import FastAPI, BackgroundTasks, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 import requests
 import uvicorn
 from config import settings, NETWORK_PROFILES, ACTIVE_PROFILE, save_active_config, save_profiles, load_profiles, PROFILES_FILE, get_local_ip
-from core_pipeline import run_detection_session, stream_yolo_frames, get_latest_detections, force_release_grabber
+from core_pipeline import run_detection_session, stream_yolo_frames, get_latest_detections, force_release_grabber, switch_model, get_active_model_name
 
 app = FastAPI()
 
@@ -460,28 +461,111 @@ async def set_flash(state: str = Query(...)):
     )
 
 # ═══════════════════════════════════════════════════════
-# PARA EL MOVIMIENTO DEL COCHE
+# MODELOS YOLO
+# ═══════════════════════════════════════════════════════
+@app.get("/api/models")
+async def list_models():
+    """Lista los modelos YOLO disponibles y cuál está activo."""
+    import os
+    models_dir = "models"
+    if not os.path.exists(models_dir):
+        return {"models": [], "active": get_active_model_name()}
+    model_files = [f.replace(".pt", "") for f in os.listdir(models_dir) if f.endswith(".pt")]
+    return {"models": model_files, "active": get_active_model_name()}
+
+@app.post("/api/model/switch")
+async def switch_yolo_model(model: str = Query(..., description="Nombre del modelo (ej: yolov8n, yolov8s)")):
+    """Cambia el modelo YOLO en caliente sin reiniciar el servidor.
+    
+    1. Para el stream YOLO activo (libera FrameGrabber)
+    2. Carga el nuevo modelo en memoria
+    3. Actualiza model_profiles.json
+    4. El frontend debe reconectar el stream después de llamar a esto.
+    """
+    global _yolo_stream_active
+
+    # 1. Parar stream activo para liberar recursos
+    await asyncio.to_thread(force_release_grabber)
+    _yolo_stream_active = False
+    await asyncio.sleep(0.3)
+
+    # 2. Cambiar el modelo en core_pipeline (hot-swap)
+    result = await asyncio.to_thread(switch_model, model)
+
+    if not result.get("ok"):
+        raise HTTPException(status_code=400, detail=result.get("error", "Error desconocido"))
+
+    return {
+        "status": "ok",
+        "model": result["model"],
+        "imgsz": result["imgsz"],
+        "skip_frames": result["skip_frames"],
+        "confidence": result["confidence"],
+        "message": f"Modelo cambiado a {result['model']}. Reconecta el stream."
+    }
+
+# ═══════════════════════════════════════════════════════
+# MOVIMIENTO DEL COCHE
 # ═══════════════════════════════════════════════════════
 
+# Cliente HTTP persistente con keep-alive
+_motor_client = httpx.AsyncClient(
+    timeout=httpx.Timeout(connect=0.5, read=0.5, write=0.3, pool=1.0),
+    limits=httpx.Limits(max_connections=4, max_keepalive_connections=4),
+)
+
+# Watchdog: auto-stop si no llega comando en 1s
+_motor_watchdog_task: asyncio.Task | None = None
+_last_motor_dir = "stop"
+
+async def _motor_watchdog():
+    """Auto-stop si no llega comando de movimiento en 1s."""
+    global _last_motor_dir
+    await asyncio.sleep(1.0)
+    if _last_motor_dir != "stop":
+        try:
+            await _motor_client.get(f"http://{_current_esp32_ip}/action?go=stop")
+            _last_motor_dir = "stop"
+        except Exception:
+            pass
+
 ALLOWED_DIRECTIONS = {"forward", "backward", "left", "right", "stop"}
+
 @app.get("/api/move")
-async def move_esp32_car(direction : str, speed : int = 125):
-    """Frontend → FastAPI → ESP32"""
-     
-    # Primero realizamos una pequeña validación para que el coche no es vuelva loco...
+async def move_esp32_car(direction: str, speed: int = 255):
+    """Frontend → ESP32. Sin dedup — el frontend controla el rate (80ms)."""
+    global _last_motor_dir, _motor_watchdog_task
+
     if direction not in ALLOWED_DIRECTIONS:
         raise HTTPException(400, "Dirección no válida")
 
-    esp_dir_url = f"http://{settings.esp32_ip}/action?go={direction}"
+    speed = max(0, min(255, speed))
+    _last_motor_dir = direction
+
+    # Watchdog: resetear en cada comando de movimiento
+    if _motor_watchdog_task and not _motor_watchdog_task.done():
+        _motor_watchdog_task.cancel()
     if direction != "stop":
-        esp_dir_url += f"&speed={speed}"
+        _motor_watchdog_task = asyncio.create_task(_motor_watchdog())
 
-    # Enviamos la dirección al ESP32 para que se mueva buuuuum buuuuuuuum 🏎️🏎️🏎️🏎️
+    # Enviar al ESP32
+    esp_url = f"http://{_current_esp32_ip}/action?go={direction}"
+    if direction != "stop":
+        esp_url += f"&speed={speed}"
+
     try:
-        await asyncio.to_thread(requests.get, esp_dir_url, timeout=1.0)
-    except requests.RequestException as e:
-        raise HTTPException(503, f"ESP32 no responde: {str(e)}")
-    
-    return {"status": "ok", "command": direction, "speed": speed if direction != "stop" else 0}
+        await _motor_client.get(esp_url)
+    except Exception as e:
+        if direction == "stop":
+            try:
+                await _motor_client.get(esp_url)
+            except Exception:
+                raise HTTPException(503, "ESP32 no responde al stop")
 
+    return {"status": "ok", "command": direction, "speed": speed}
+
+
+@app.on_event("shutdown")
+async def shutdown_event():
+    await _motor_client.aclose()
 

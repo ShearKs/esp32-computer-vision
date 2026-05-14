@@ -14,9 +14,16 @@
 #include "soc/rtc_cntl_reg.h"  // Used to disable brownout detection for ESP32
 #include "esp_http_server.h"   // ESP32 HTTP server library, used to handle Web requests
 
+// #include <Preferences.h>
+// #include <WebServer.h>
+
 // Replace with your network credentials
 const char *ssid = "Sergio_router";          // Set to your Wi-Fi name
 const char *password = "ss9dksdwsxn4";  // Set to your Wi-Fi passwords
+// const char *ssid = "WIFI_A48_2G";          // Set to your Wi-Fi name
+// const char *password = "Abracadabra123";  // Set to your Wi-Fi passwords
+// const char *ssid = "vodafoneBA5110";          // Set to your Wi-Fi name
+// const char *password = "Y7SJH9S55JQSHEEP";  // Set to your Wi-Fi passwords
 
 //Set camera pins
 #define PWDN_GPIO_NUM 32
@@ -86,13 +93,25 @@ httpd_handle_t stream_httpd = NULL;
 
 void startCameraServer();
 
+// Configuración PWM ultrasónica para eliminar el pitido de los motores
+const int PWM_FREQ = 30000;   // 30 kHz (fuera del rango audible)
+const int PWM_RES = 8;        // 8 bits de resolución (0-255)
+const int PWM_CH_R1 = 4;
+const int PWM_CH_R2 = 5;
+const int PWM_CH_L1 = 6;
+const int PWM_CH_L2 = 7;
+
 void setup() {
   WRITE_PERI_REG(RTC_CNTL_BROWN_OUT_REG, 0);  //disable brownout detector
 
-  pinMode(MOTOR_R_PIN_1, OUTPUT);
-  pinMode(MOTOR_R_PIN_2, OUTPUT);
-  pinMode(MOTOR_L_PIN_1, OUTPUT);
-  pinMode(MOTOR_L_PIN_2, OUTPUT);
+  ledcSetup(PWM_CH_R1, PWM_FREQ, PWM_RES);
+  ledcSetup(PWM_CH_R2, PWM_FREQ, PWM_RES);
+  ledcSetup(PWM_CH_L1, PWM_FREQ, PWM_RES);
+  ledcSetup(PWM_CH_L2, PWM_FREQ, PWM_RES);
+  ledcAttachPin(MOTOR_R_PIN_1, PWM_CH_R1);
+  ledcAttachPin(MOTOR_R_PIN_2, PWM_CH_R2);
+  ledcAttachPin(MOTOR_L_PIN_1, PWM_CH_L1);
+  ledcAttachPin(MOTOR_L_PIN_2, PWM_CH_L2);
   pinMode(LED_GPIO_NUM, OUTPUT);  // LED is initially in output mode
   Serial.begin(115200);
   Serial.setDebugOutput(false);
@@ -401,34 +420,34 @@ static esp_err_t action_handler(httpd_req_t *req) {
 
     if (strstr(query, "go=forward")) {
       Serial.printf("Forward (speed=%d)\n", rSpeed);
-      analogWrite(MOTOR_R_PIN_1, 0);
-      analogWrite(MOTOR_R_PIN_2, rSpeed);
-      analogWrite(MOTOR_L_PIN_1, lSpeed);
-      analogWrite(MOTOR_L_PIN_2, 0);
+      ledcWrite(PWM_CH_R1, 0);
+      ledcWrite(PWM_CH_R2, rSpeed);
+      ledcWrite(PWM_CH_L1, lSpeed);
+      ledcWrite(PWM_CH_L2, 0);
     } else if (strstr(query, "go=backward")) {
       Serial.printf("Backward (speed=%d)\n", rSpeed);
-      analogWrite(MOTOR_R_PIN_1, rSpeed);
-      analogWrite(MOTOR_R_PIN_2, 0);
-      analogWrite(MOTOR_L_PIN_1, 0);
-      analogWrite(MOTOR_L_PIN_2, lSpeed);
+      ledcWrite(PWM_CH_R1, rSpeed);
+      ledcWrite(PWM_CH_R2, 0);
+      ledcWrite(PWM_CH_L1, 0);
+      ledcWrite(PWM_CH_L2, lSpeed);
     } else if (strstr(query, "go=left")) {
       Serial.printf("Left (speed=%d)\n", rSpeed);
-      analogWrite(MOTOR_R_PIN_1, 0);
-      analogWrite(MOTOR_R_PIN_2, rSpeed);
-      analogWrite(MOTOR_L_PIN_1, 0);
-      analogWrite(MOTOR_L_PIN_2, lSpeed);
+      ledcWrite(PWM_CH_R1, 0);
+      ledcWrite(PWM_CH_R2, rSpeed);
+      ledcWrite(PWM_CH_L1, 0);
+      ledcWrite(PWM_CH_L2, lSpeed);
     } else if (strstr(query, "go=right")) {
       Serial.printf("Right (speed=%d)\n", rSpeed);
-      analogWrite(MOTOR_R_PIN_1, rSpeed);
-      analogWrite(MOTOR_R_PIN_2, 0);
-      analogWrite(MOTOR_L_PIN_1, lSpeed);
-      analogWrite(MOTOR_L_PIN_2, 0);
+      ledcWrite(PWM_CH_R1, rSpeed);
+      ledcWrite(PWM_CH_R2, 0);
+      ledcWrite(PWM_CH_L1, lSpeed);
+      ledcWrite(PWM_CH_L2, 0);
     } else if (strstr(query, "go=stop")) {
       Serial.println("Stop");
-      analogWrite(MOTOR_R_PIN_1, 0);
-      analogWrite(MOTOR_R_PIN_2, 0);
-      analogWrite(MOTOR_L_PIN_1, 0);
-      analogWrite(MOTOR_L_PIN_2, 0);
+      ledcWrite(PWM_CH_R1, 0);
+      ledcWrite(PWM_CH_R2, 0);
+      ledcWrite(PWM_CH_L1, 0);
+      ledcWrite(PWM_CH_L2, 0);
     } else if (strstr(query, "led=on")) {
       Serial.println("LED ON");
       digitalWrite(LED_GPIO_NUM, HIGH);
