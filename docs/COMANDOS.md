@@ -64,4 +64,5 @@ npx cap run ios
 
 
 ## Para permitir que se pueda con subnetting a partir 192.168.1.x
+
 netsh advfirewall firewall add rule name=RobotVisionBackend dir=in action=allow protocol=TCP localport=8000 profile=private remoteip=192.168.1.0/24

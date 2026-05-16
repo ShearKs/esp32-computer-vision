@@ -1,10 +1,14 @@
 // src/services/api.ts
 import { Capacitor } from '@capacitor/core';
-import { ConfigResponse, StreamReadyResponse, Detection, DetectionResponse, YoloEvent,
-  DetectionsCallback, NetworkProfile } from '../types/interfaces';
+import {
+  ConfigResponse, StreamReadyResponse, Detection, DetectionResponse, YoloEvent,
+  DetectionsCallback, NetworkProfile
+} from '../types/interfaces';
 
-export type { ConfigResponse, StreamReadyResponse, Detection, DetectionResponse, YoloEvent,
-  DetectionsCallback, NetworkProfile } from '../types/interfaces';
+export type {
+  ConfigResponse, StreamReadyResponse, Detection, DetectionResponse, YoloEvent,
+  DetectionsCallback, NetworkProfile
+} from '../types/interfaces';
 
 const BACKEND_PORT = 8000;
 const STORAGE_KEY = 'robot_backend_ip';
@@ -216,6 +220,30 @@ export const ApiService = {
     return res.json();
   },
 
+  async getModesYolo(): Promise<{ models: string[]; active: string }> {
+    const base = ApiService.getBaseUrl();
+    const res = await fetch(`${base}/api/models`);
+    if (!res.ok) throw new Error(`HTTP ${res.status}: ${await res.text()}`);
+    const data = await res.json();
+    return { models: data.models || [], active: data.active || 'yolov8s' };
+  },
+
+  /** Cambia el modelo YOLO en caliente en el backend */
+  async switchModel(modelName: string): Promise<{ ok: boolean; model?: string; error?: string }> {
+    const base = ApiService.getBaseUrl();
+    try {
+      const res = await fetch(`${base}/api/model/switch?model=${encodeURIComponent(modelName)}`, { method: 'POST' });
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({ detail: 'Error desconocido' }));
+        return { ok: false, error: data.detail || `HTTP ${res.status}` };
+      }
+      const data = await res.json();
+      return { ok: true, model: data.model };
+    } catch (err: any) {
+      return { ok: false, error: err.message };
+    }
+  },
+
   getYoloStreamUrl(confidence?: number): string {
     const base = ApiService.getBaseUrl();
     const url = `${base}/api/stream/yolo`;
@@ -268,11 +296,12 @@ export const ApiService = {
     }
   },
 
-  // Método para poder mover al coche ESP-32...
-  async controlRobot(direction: string, speed : number): Promise<void>{
+  // Mover el coche ESP-32 — fire-and-forget, sin timeout agresivo
+  controlRobot(direction: string, speed: number): Promise<void> {
     const base = ApiService.getBaseUrl();
-    const res = await fetch(`${base}/api/move?direction=${direction}&speed=${speed}`)
-    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    return fetch(`${base}/api/move?direction=${direction}&speed=${speed}`, { keepalive: true })
+      .then(() => { })
+      .catch(() => { });
   },
 
 
@@ -285,5 +314,109 @@ export const ApiService = {
       } catch { /* ignore malformed */ }
     };
     return () => es.close();
-  }
+  },
+
+  // ─── WiFi del ESP32 ──────────────────────────────────
+
+  /** Obtiene el estado WiFi actual del ESP32 (SSID, IP, RSSI, modo AP) */
+  async getEsp32WifiStatus(): Promise<{
+    mode: 'sta' | 'ap';
+    ssid?: string;
+    ip: string;
+    rssi?: number;
+    mac?: string;
+    ap_ssid?: string;
+    saved_ssid?: string;
+  } | null> {
+    const base = ApiService.getBaseUrl();
+    try {
+      const res = await fetch(`${base}/api/esp32/wifi-status`);
+      if (!res.ok) return null;
+      return res.json();
+    } catch {
+      return null;
+    }
+  },
+
+  /** Envía nuevas credenciales WiFi al ESP32. Se reiniciará tras ~2s. */
+  async setEsp32Wifi(ssid: string, password: string): Promise<{ ok: boolean; message?: string; error?: string }> {
+    const base = ApiService.getBaseUrl();
+    try {
+      const res = await fetch(
+        `${base}/api/esp32/wifi?ssid=${encodeURIComponent(ssid)}&password=${encodeURIComponent(password)}`,
+        { method: 'POST' }
+      );
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({ detail: 'Error desconocido' }));
+        return { ok: false, error: data.detail || `HTTP ${res.status}` };
+      }
+      const data = await res.json();
+      return { ok: true, message: data.message };
+    } catch (err: any) {
+      return { ok: false, error: err.message };
+    }
+  },
+
+  /** Resetea el WiFi del ESP32 a las credenciales por defecto. */
+  async resetEsp32Wifi(): Promise<{ ok: boolean; error?: string }> {
+    const base = ApiService.getBaseUrl();
+    try {
+      const res = await fetch(`${base}/api/esp32/wifi-reset`, { method: 'POST' });
+      return { ok: res.ok };
+    } catch (err: any) {
+      return { ok: false, error: err.message };
+    }
+  },
+
+  /** Escanea la subred buscando el ESP32 después de un cambio de WiFi. */
+  async scanForEsp32(subnet?: string): Promise<{ found: boolean; ip?: string; error?: string }> {
+    const base = ApiService.getBaseUrl();
+    try {
+      const url = subnet
+        ? `${base}/api/esp32/scan?subnet=${encodeURIComponent(subnet)}`
+        : `${base}/api/esp32/scan`;
+      const res = await fetch(url, { method: 'POST' });
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({ detail: 'No encontrado' }));
+        return { found: false, error: data.detail };
+      }
+      const data = await res.json();
+      return { found: true, ip: data.ip };
+    } catch (err: any) {
+      return { found: false, error: err.message };
+    }
+  },
+
+  // ─── Funcionalidades extra para dataset y fotos ──────────────────────
+  async uploadDatasetImage(blob: Blob): Promise<{ ok: boolean; filename?: string; error?: string }> {
+    const base = ApiService.getBaseUrl();
+    const formData = new FormData()
+
+    //Introducimos el archivo binario en el formulario
+    formData.append('file', blob, 'dataset_frame.jpg');
+
+    try{
+
+      const res = await fetch(`${base}/api/dataset/capture`, {
+        method: 'POST',
+        body: formData,
+      });
+
+      if (!res.ok){
+        return {ok: false, error: `HTTP ${res.status}`};
+      }
+
+      //Obtenemos el data
+      const data = await res.json();
+      // si todo ha ido bien devolvemos el nombre del archivo guardado en el backend
+      return {ok: true, filename: data.filename};
+
+    }catch(err: any){
+
+      return {ok : false , error: err.message};
+    }
+  },
+
+
+
 };

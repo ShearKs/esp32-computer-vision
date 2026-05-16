@@ -3,17 +3,17 @@
 /* ═══ Side Menu ═══ */
 .app-side-menu {
   --width: 280px;
-  --background: #0f0f1a;
+  
 }
 
-.app-side-menu ion-toolbar {
-  --background: #0f0f1a;
-  --color: #fff;
+.menu-header-title {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 0 12px;
+  height: 100%;
 }
 
-.menu-content {
-  --background: #0f0f1a;
-}
 
 .menu-section {
   margin-top: 20px;
@@ -40,7 +40,7 @@
 .menu-item {
   --background: rgba(255, 255, 255, 0.04);
   --background-hover: rgba(255, 255, 255, 0.08);
-  --color: #fff;
+ 
   --inner-padding-end: 12px;
   --min-height: 58px;
   border-bottom: 1px solid rgba(255, 255, 255, 0.04);
@@ -54,7 +54,11 @@
   font-size: 14px;
   font-weight: 600;
   margin: 0 0 2px;
-  color: #fff;
+  /* color: #fff; */
+}
+
+.select-conduction{
+  font-size: 14px;
 }
 
 .menu-item p {
@@ -108,3 +112,5 @@
   from { opacity: 0.5; }
   to { opacity: 1; }
 }
+
+

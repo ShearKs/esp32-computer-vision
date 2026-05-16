@@ -10,11 +10,10 @@ export const VideoStream: React.FC = () => {
   const [retryCount, setRetryCount] = useState(0);
   const imgRef = useRef<HTMLImageElement>(null);
   const loadTimeoutRef = useRef<ReturnType<typeof setTimeout>>(undefined);
+  const mountedRef = useRef(true);
 
-  // Usar el proxy del backend en vez de conectar directamente al ESP32.
-  // Esto evita problemas de CORS y funciona en Android nativo.
   const rawStreamUrl = `${ApiService.getBaseUrl()}/api/stream/raw`;
-  const [currentUrl, setCurrentUrl] = useState(rawStreamUrl);
+  const [currentUrl, setCurrentUrl] = useState('');
 
   useEffect(() => {
     setCurrentUrl(rawStreamUrl);
@@ -22,26 +21,35 @@ export const VideoStream: React.FC = () => {
     setRetryCount(0);
   }, [rawStreamUrl]);
 
-  // Fallback: si onLoad no dispara pero la imagen tiene contenido, forzar 'connected'
+  useEffect(() => {
+    mountedRef.current = true;
+    return () => {
+      mountedRef.current = false;
+      if (loadTimeoutRef.current) clearTimeout(loadTimeoutRef.current);
+    };
+  }, []);
+
+  // Polling: detectar cuando la imagen tiene contenido
   useEffect(() => {
     if (status !== 'loading') return;
-
-    loadTimeoutRef.current = setTimeout(() => {
-      const img = imgRef.current;
-      if (img && img.naturalWidth > 0 && img.naturalHeight > 0) {
-        console.log('VideoStream: onLoad no disparó, pero la imagen tiene contenido → connected');
-        setStatus('connected');
-      }
-    }, 5000);
 
     const pollInterval = setInterval(() => {
       const img = imgRef.current;
       if (img && img.naturalWidth > 0 && img.naturalHeight > 0) {
-        console.log('VideoStream: imagen detectada via polling → connected');
-        setStatus('connected');
+        console.log('VideoStream: imagen detectada → connected');
+        if (mountedRef.current) setStatus('connected');
         clearInterval(pollInterval);
       }
     }, 1500);
+
+    loadTimeoutRef.current = setTimeout(() => {
+      const img = imgRef.current;
+      if (img && img.naturalWidth > 0 && img.naturalHeight > 0) {
+        if (mountedRef.current) setStatus('connected');
+      } else if (mountedRef.current && status === 'loading' && retryCount >= 3) {
+        setStatus('error');
+      }
+    }, 10000);
 
     return () => {
       if (loadTimeoutRef.current) clearTimeout(loadTimeoutRef.current);
@@ -51,16 +59,26 @@ export const VideoStream: React.FC = () => {
 
   const handleLoad = useCallback(() => {
     if (loadTimeoutRef.current) clearTimeout(loadTimeoutRef.current);
-    setStatus('connected');
+    if (mountedRef.current) setStatus('connected');
   }, []);
 
   const handleError = useCallback(() => {
+    if (!mountedRef.current) return;
     if (loadTimeoutRef.current) clearTimeout(loadTimeoutRef.current);
-    if (retryCount < 10) {
+
+    if (retryCount < 5) {
+      // Reintento SIN cache-buster — reutiliza la misma URL estable
+      const delay = Math.min(2000 + retryCount * 1000, 5000);
       setTimeout(() => {
+        if (!mountedRef.current) return;
         setRetryCount(prev => prev + 1);
-        setCurrentUrl(`${rawStreamUrl}?_retry=${Date.now()}`);
-      }, 1500);
+        setStatus('loading');
+        // Forzar re-render limpiando y reponiendo URL
+        setCurrentUrl('');
+        requestAnimationFrame(() => {
+          if (mountedRef.current) setCurrentUrl(rawStreamUrl);
+        });
+      }, delay);
     } else {
       setStatus('error');
     }
@@ -68,8 +86,17 @@ export const VideoStream: React.FC = () => {
 
   const handleRetry = () => {
     setRetryCount(0);
-    setCurrentUrl(`${rawStreamUrl}?_retry=${Date.now()}`);
     setStatus('loading');
+    ApiService.reconnect().then(() => {
+      setTimeout(() => {
+        if (mountedRef.current) {
+          setCurrentUrl('');
+          requestAnimationFrame(() => {
+            if (mountedRef.current) setCurrentUrl(rawStreamUrl);
+          });
+        }
+      }, 800);
+    });
   };
 
   return (
@@ -83,7 +110,7 @@ export const VideoStream: React.FC = () => {
         {status === 'loading' && (
           <div className="overlay loading-overlay">
             <IonSpinner name="crescent" />
-            <p>{retryCount > 0 ? `Reintentando... (${retryCount}/10)` : 'Conectando...'}</p>
+            <p>{retryCount > 0 ? `Reintentando... (${retryCount}/5)` : 'Conectando...'}</p>
           </div>
         )}
 
@@ -100,15 +127,18 @@ export const VideoStream: React.FC = () => {
           </div>
         )}
 
-        <img
-          ref={imgRef}
-          src={currentUrl}
-          alt="Camera Stream"
-          className="stream-img"
-          onLoad={handleLoad}
-          onError={handleError}
-          style={{ display: status === 'connected' ? 'block' : 'none' }}
-        />
+        {currentUrl && (
+          <img
+            ref={imgRef}
+            src={currentUrl}
+            alt="Camera Stream"
+            className="stream-img"
+            crossOrigin="anonymous"
+            onLoad={handleLoad}
+            onError={handleError}
+            style={{ display: status === 'connected' ? 'block' : 'none' }}
+          />
+        )}
       </div>
     </IonCard>
   );

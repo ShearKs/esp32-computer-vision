@@ -1,35 +1,46 @@
 // src/pages/HomePage.tsx
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { Capacitor } from '@capacitor/core';
-import { 
-  IonContent, IonHeader, IonPage, IonTitle, IonToolbar, 
-  IonSpinner, IonMenuButton, IonButtons, IonButton
+import {
+  IonContent, IonHeader, IonPage, IonTitle, IonToolbar,
+  IonSpinner, IonMenuButton, IonButtons, IonButton,
+  IonIcon, useIonToast
 } from '@ionic/react';
 import { VideoStream } from '../components/VideoStream';
-import { JoystickControl,Direction } from '../components/JoystickControl';
+import { JoystickControl, Direction } from '../components/JoystickControl';
 import { DetectionStream } from '../components/DetectionStream';
 import { DetectionPanel } from '../components/DetectionPanel';
 import { ApiService } from '../services/api';
 import { useSettings } from '../context/SettingsContext';
 import './HomePage.css';
+import { cameraOutline } from 'ionicons/icons';
 
 const Home: React.FC = () => {
-  const handleMove = async(direction: Direction, speed: number, x: number, y: number) => {
-
-   // Para debugging... 
-   console.log(`Mover: ${direction} | Velocidad: ${speed}%`);
-
-    await ApiService.controlRobot(direction, speed)
+  const sendCommand = (direction: Direction, speed: number) => {
+    if (drivingMode === 'websocket') {
+      // TODO: implementar WebSocket para menor latencia
+      console.log('🔌 WebSocket mode not yet implemented, falling back to HTTP');
+    }
+    ApiService.controlRobot(direction, speed).catch(() => { });
   };
 
-  const handleStop = () => console.log('🛑 Stop');
+  const handleMove = (direction: Direction, speed: number, _x: number, _y: number) => {
+    sendCommand(direction, speed);
+  };
+
+  const handleStop = () => {
+    sendCommand('stop', 0);
+  };
 
   const [ready, setReady] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [statusMsg, setStatusMsg] = useState('Conectando con el servidor...');
   const [streamKey, setStreamKey] = useState(0);
   const [retryKey, setRetryKey] = useState(0);
-  const { yoloEnabled, reloadKey } = useSettings();
+
+  const [presentToast] = useIonToast();
+
+  const { yoloEnabled, reloadKey, drivingMode, isCapturing, capturePhoto } = useSettings();
 
   const handleRetry = () => {
     setReady(false);
@@ -38,7 +49,55 @@ const Home: React.FC = () => {
     setRetryKey(prev => prev + 1);
   };
 
-  useEffect(() => { setStreamKey(prev => prev + 1); }, [yoloEnabled]);
+  const handleTakeFrame = async () => {
+    const result = await capturePhoto();
+    if (result.ok) {
+      presentToast({
+        message: `Foto guardada: ${result.filename}`,
+        color: 'success',
+        duration: 2500,
+        position: 'bottom',
+        cssClass: 'capture-toast'
+      })
+    } else {
+      presentToast({
+        message: `Error: ${result.error}`,
+        color: 'danger',
+        duration: 3000,
+        position: 'bottom',
+        cssClass: 'capture-toast'
+      })
+    }
+  };
+
+
+  // Al cambiar YOLO on/off: liberar el grabber backend primero, luego montar el nuevo stream
+  const isFirstMount = useRef(true);
+  useEffect(() => {
+    // En el primer montaje no necesitamos reconectar — el stream aún no existe
+    if (isFirstMount.current) {
+      isFirstMount.current = false;
+      return;
+    }
+
+    let cancelled = false;
+    const switchStream = async () => {
+      try {
+        // 1. Pedir al backend que mate streams activos (FrameGrabber + raw proxy)
+        await ApiService.reconnect();
+
+        // 2. Esperar a que el ESP32 libere su socket de stream
+        await new Promise(r => setTimeout(r, 500));
+      } catch { /* continuar igualmente */ }
+
+      // 3. Montar el nuevo stream (raw o YOLO) con un key fresco
+      //    Un solo cambio de key — el anterior ya se desmontó porque React
+      //    condiciona el render con yoloEnabled
+      if (!cancelled) setStreamKey(prev => prev + 1);
+    };
+    switchStream();
+    return () => { cancelled = true; };
+  }, [yoloEnabled]);
 
   // Escuchar reloadKey del menú lateral → forzar reconexión completa
   useEffect(() => {
@@ -112,7 +171,7 @@ const Home: React.FC = () => {
         <IonToolbar>
           <IonTitle>🤖 Robot Control</IonTitle>
           <IonButtons slot="end">
-            <IonMenuButton menu="main-menu" autoHide = {false} />
+            <IonMenuButton menu="main-menu" autoHide={false} />
           </IonButtons>
         </IonToolbar>
       </IonHeader>
@@ -139,28 +198,33 @@ const Home: React.FC = () => {
               </div>
             )}
             {ready && (
-              yoloEnabled ? (
-                <DetectionStream key={`yolo-${streamKey}`} />
-              ) : (
-                <VideoStream key={`raw-${streamKey}`} />
-              )
+              <div className="camera-container">
+                {yoloEnabled ? (
+                  <DetectionStream key={`yolo-${streamKey}`} />
+                ) : (
+                  <VideoStream key={`raw-${streamKey}`} />
+                )}
+                <IonButton className="photo-btn" size="small" onClick={handleTakeFrame} disabled={isCapturing}>
+                  <IonIcon slot="icon-only" icon={cameraOutline}></IonIcon>
+                </IonButton>
+              </div>
             )}
-          </div>
+          </div> {/* Tu cierre de div original */}
 
           {/* ═══════════════════════════════════════════════════ */}
           {/* FILA 2: DETECCIONES (izq) + JOYSTICK (der)        */}
           {/* Siempre visible, incluso mientras se conecta       */}
           {/* ═══════════════════════════════════════════════════ */}
           <div className="home-content">
-            
+
             {/* Columna izquierda: Panel de detecciones */}
             <div className="controls-detections">
-              <DetectionPanel yoloEnabled={yoloEnabled}/>
+              <DetectionPanel yoloEnabled={yoloEnabled} />
             </div>
 
             {/* Columna derecha: Joystick */}
             <div className="controls-joystick">
-              <JoystickControl onMove = {handleMove} onStop = {handleStop} />
+              <JoystickControl onMove={handleMove} onStop={handleStop} />
             </div>
 
           </div>

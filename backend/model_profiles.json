@@ -1,12 +1,11 @@
 {
-  "active_model": "yolov8s",
-
+  "active_model": "yolov8n",
   "profiles": {
     "yolov8n": {
       "description": "Nano - Ultra rápido, menor precisión",
       "imgsz": 416,
       "skip_frames": 2,
-      "confidence": 0.50,
+      "confidence": 0.5,
       "jpeg_quality": 55,
       "mjpeg_width": 540
     },
@@ -22,7 +21,7 @@
       "description": "Medium - Mayor precisión, requiere GPU o paciencia",
       "imgsz": 480,
       "skip_frames": 5,
-      "confidence": 0.40,
+      "confidence": 0.4,
       "jpeg_quality": 50,
       "mjpeg_width": 480
     },
@@ -38,7 +37,7 @@
       "description": "Extra Large - Máxima precisión, solo GPU",
       "imgsz": 480,
       "skip_frames": 10,
-      "confidence": 0.30,
+      "confidence": 0.3,
       "jpeg_quality": 40,
       "mjpeg_width": 420
     }

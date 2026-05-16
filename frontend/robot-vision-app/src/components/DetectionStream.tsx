@@ -14,37 +14,55 @@ export const DetectionStream: React.FC<DetectionStreamProps> = ({ confidence }) 
   const [retryCount, setRetryCount] = useState(0);
   const imgRef = useRef<HTMLImageElement>(null);
   const loadTimeoutRef = useRef<ReturnType<typeof setTimeout>>(undefined);
+  const mountedRef = useRef(true);
 
   const streamUrl = ApiService.getYoloStreamUrl(confidence);
-  const [currentUrl, setCurrentUrl] = useState(streamUrl);
 
+  // Un solo URL estable — NO añadir cache busters que crean múltiples conexiones backend
+  const [currentUrl, setCurrentUrl] = useState('');
+
+  // Cuando la URL base cambia (nuevo backend, nueva confianza), resetear
   useEffect(() => {
     setCurrentUrl(streamUrl);
     setStatus('loading');
     setRetryCount(0);
   }, [streamUrl]);
 
-  // Fallback: si onLoad no dispara en 6s pero la imagen tiene tamaño, forzar 'connected'
+  // Cleanup al desmontar
+  useEffect(() => {
+    mountedRef.current = true;
+    return () => {
+      mountedRef.current = false;
+      if (loadTimeoutRef.current) clearTimeout(loadTimeoutRef.current);
+    };
+  }, []);
+
+  // Polling: detectar cuando la imagen tiene contenido (onLoad no siempre dispara en MJPEG)
   useEffect(() => {
     if (status !== 'loading') return;
 
-    loadTimeoutRef.current = setTimeout(() => {
-      const img = imgRef.current;
-      if (img && img.naturalWidth > 0 && img.naturalHeight > 0) {
-        console.log('🎥 DetectionStream: onLoad no disparó, pero la imagen tiene contenido → connected');
-        setStatus('connected');
-      }
-    }, 6000);
-
-    // También hacer polling más agresivo cada 1.5s
+    // Polling cada 1.5s — si la imagen ya tiene pixeles, marcar como conectado
     const pollInterval = setInterval(() => {
       const img = imgRef.current;
       if (img && img.naturalWidth > 0 && img.naturalHeight > 0) {
-        console.log('🎥 DetectionStream: imagen detectada via polling → connected');
-        setStatus('connected');
+        console.log('DetectionStream: imagen detectada → connected');
+        if (mountedRef.current) setStatus('connected');
         clearInterval(pollInterval);
       }
     }, 1500);
+
+    // Timeout: si tras 12s no hay imagen, marcar error
+    loadTimeoutRef.current = setTimeout(() => {
+      const img = imgRef.current;
+      if (img && img.naturalWidth > 0 && img.naturalHeight > 0) {
+        if (mountedRef.current) setStatus('connected');
+      } else if (mountedRef.current && status === 'loading') {
+        // Solo marcar error si seguimos en loading y no hubo retries
+        if (retryCount >= 2) {
+          setStatus('error');
+        }
+      }
+    }, 12000);
 
     return () => {
       if (loadTimeoutRef.current) clearTimeout(loadTimeoutRef.current);
@@ -54,17 +72,27 @@ export const DetectionStream: React.FC<DetectionStreamProps> = ({ confidence }) 
 
   const handleLoad = useCallback(() => {
     if (loadTimeoutRef.current) clearTimeout(loadTimeoutRef.current);
-    setStatus('connected');
+    if (mountedRef.current) setStatus('connected');
   }, []);
 
   const handleError = useCallback(() => {
+    if (!mountedRef.current) return;
     if (loadTimeoutRef.current) clearTimeout(loadTimeoutRef.current);
-    if (retryCount < 10) {
+
+    if (retryCount < 5) {
+      // Reintento silencioso: recargar la misma URL SIN cache-buster
+      // Esto reutiliza el endpoint del backend en vez de crear conexiones nuevas
+      const delay = Math.min(2000 + retryCount * 1000, 5000);
       setTimeout(() => {
+        if (!mountedRef.current) return;
         setRetryCount(prev => prev + 1);
-        const separator = streamUrl.includes('?') ? '&' : '?';
-        setCurrentUrl(`${streamUrl}${separator}_retry=${Date.now()}`);
-      }, 1500);
+        setStatus('loading');
+        // Forzar re-render de la img quitando y poniendo la URL
+        setCurrentUrl('');
+        requestAnimationFrame(() => {
+          if (mountedRef.current) setCurrentUrl(streamUrl);
+        });
+      }, delay);
     } else {
       setStatus('error');
     }
@@ -72,9 +100,18 @@ export const DetectionStream: React.FC<DetectionStreamProps> = ({ confidence }) 
 
   const handleRetry = () => {
     setRetryCount(0);
-    const separator = streamUrl.includes('?') ? '&' : '?';
-    setCurrentUrl(`${streamUrl}${separator}_retry=${Date.now()}`);
     setStatus('loading');
+    // Forzar reconexión backend antes de reintentar
+    ApiService.reconnect().then(() => {
+      setTimeout(() => {
+        if (mountedRef.current) {
+          setCurrentUrl('');
+          requestAnimationFrame(() => {
+            if (mountedRef.current) setCurrentUrl(streamUrl);
+          });
+        }
+      }, 800);
+    });
   };
 
   return (
@@ -95,7 +132,7 @@ export const DetectionStream: React.FC<DetectionStreamProps> = ({ confidence }) 
         {status === 'loading' && (
           <div className="detection-overlay loading-overlay">
             <IonSpinner name="crescent" />
-            <p>{retryCount > 0 ? `Reintentando... (${retryCount}/10)` : 'Cargando modelo YOLO...'}</p>
+            <p>{retryCount > 0 ? `Reintentando... (${retryCount}/5)` : 'Cargando modelo YOLO...'}</p>
             <small>Esto puede tardar unos segundos</small>
           </div>
         )}
@@ -113,15 +150,18 @@ export const DetectionStream: React.FC<DetectionStreamProps> = ({ confidence }) 
           </div>
         )}
 
-        <img
-          ref={imgRef}
-          src={currentUrl}
-          alt="YOLO Detection Stream"
-          className="detection-stream-img"
-          onLoad={handleLoad}
-          onError={handleError}
-          style={{ display: status === 'connected' ? 'block' : 'none' }}
-        />
+        {currentUrl && (
+          <img
+            ref={imgRef}
+            src={currentUrl}
+            alt="YOLO Detection Stream"
+            className="detection-stream-img"
+            crossOrigin="anonymous"
+            onLoad={handleLoad}
+            onError={handleError}
+            style={{ display: status === 'connected' ? 'block' : 'none' }}
+          />
+        )}
       </div>
     </IonCard>
   );

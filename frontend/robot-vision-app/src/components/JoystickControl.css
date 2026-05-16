@@ -11,7 +11,7 @@
 }
 
 .joystick-card ion-card-content {
-  padding: 8px !important;
+  padding: 0 !important;
   height: 100%;
   display: flex;
   align-items: center;
@@ -79,17 +79,17 @@
 
 .control-zone {
   display: grid;
-  grid-template-columns: 36px 1fr 36px;
-  grid-template-rows: 36px 1fr 36px;
+  grid-template-columns: 48px 1fr 48px;
+  grid-template-rows: 48px 1fr 48px;
   grid-template-areas:
     ".      up     ."
     "left   joy    right"
     ".      down   .";
   justify-items: center;
   align-items: center;
-  gap: 6px;
+  gap: 8px;
   padding: 0;
-  max-width: 230px;
+  max-width: 310px;
   margin: 0 auto;
 }
 
@@ -99,10 +99,10 @@
   display: flex;
   align-items: center;
   justify-content: center;
-  width: 32px;
-  height: 32px;
+  width: 44px;
+  height: 44px;
   border: none;
-  border-radius: 9px;
+  border-radius: 11px;
   background: rgba(255, 255, 255, 0.1);
   color: rgba(255, 255, 255, 0.7);
   cursor: pointer;
@@ -119,8 +119,8 @@
 }
 
 .dpad-btn svg {
-  width: 14px;
-  height: 14px;
+  width: 20px;
+  height: 20px;
   pointer-events: none;
 }
 
@@ -225,10 +225,10 @@
 @media (max-width: 360px) {
   .control-zone {
     gap: 4px;
-    max-width: 200px;
+    max-width: 240px;
   }
   .dpad-btn {
-    width: 28px;
-    height: 28px;
+    width: 32px;
+    height: 32px;
   }
 }

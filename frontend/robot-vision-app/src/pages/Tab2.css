@@ -66,3 +66,135 @@
   border-radius: 10px;
   padding: 0 12px;
 }
+
+.profile-list-editor {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  margin: 16px 0;
+}
+
+.profile-editor-card {
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid rgba(255, 255, 255, 0.06);
+  border-radius: 14px;
+  padding: 16px;
+}
+
+.profile-editor-card-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 12px;
+}
+
+.profile-editor-index {
+  font-size: 13px;
+  font-weight: 700;
+  color: rgba(255, 255, 255, 0.3);
+  text-transform: uppercase;
+  letter-spacing: 1px;
+}
+
+.profile-editor-input {
+  --background: rgba(255, 255, 255, 0.06);
+  --color: #fff;
+  --placeholder-color: rgba(255, 255, 255, 0.3);
+  border-radius: 10px;
+  margin-bottom: 8px;
+  padding: 0 12px;
+}
+
+.add-profile-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+/* ── Tarjeta vacía de perfiles ────────────────────── */
+.empty-profiles-card {
+  background: rgba(255, 255, 255, 0.03);
+  border: 1px dashed rgba(255, 255, 255, 0.12);
+  border-radius: 14px;
+  padding: 20px 16px;
+  text-align: center;
+}
+
+/* ── Diagnóstico: log box ─────────────────────────── */
+.diag-log-box {
+  background: #1a1a2e;
+  border-radius: 8px;
+  padding: 12px;
+  font-family: monospace;
+  font-size: 11px;
+  color: #e0e0e0;
+  max-height: 300px;
+  overflow-y: auto;
+  white-space: pre-wrap;
+  word-break: break-all;
+  border: 1px solid #333;
+}
+
+.diag-line,
+.diag-line-ok,
+.diag-line-err,
+.diag-line-warn,
+.diag-line-header {
+  padding: 2px 0;
+}
+
+.diag-line-ok {
+  color: #4ade80;
+}
+
+.diag-line-err {
+  color: #f87171;
+}
+
+.diag-line-warn {
+  color: #fbbf24;
+}
+
+.diag-line-header {
+  color: #60a5fa;
+}
+
+/* ── Botón destructivo en IonAlert ────────────────── */
+.alert-button-danger {
+  color: var(--ion-color-danger) !important;
+  font-weight: 600;
+}
+
+/* ── WiFi del ESP32 ──────────────────────────────── */
+.wifi-status-card {
+  background: rgba(255, 255, 255, 0.03);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 14px;
+  padding: 12px 16px;
+  margin-bottom: 8px;
+}
+
+.wifi-details-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 4px;
+}
+
+.wifi-detail-chip {
+  --background: rgba(255, 255, 255, 0.06);
+  font-size: 12px;
+}
+
+.wifi-password-row {
+  display: flex;
+  align-items: flex-end;
+  gap: 4px;
+}
+
+.wifi-actions-row {
+  display: flex;
+  gap: 8px;
+  margin-top: 8px;
+}
+

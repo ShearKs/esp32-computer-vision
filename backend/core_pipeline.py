@@ -67,9 +67,12 @@ def switch_model(new_model_name: str) -> dict:
     """Cambia el modelo YOLO en caliente sin reiniciar el servidor.
     
     1. Verifica que el .pt existe
-    2. Actualiza model_profiles.json
-    3. Carga el nuevo modelo en memoria
-    4. Actualiza todos los parámetros de inferencia
+    2. Carga el nuevo modelo en memoria
+    3. Actualiza los parámetros de inferencia desde el perfil
+    
+    NOTA: NO modifica model_profiles.json. El modelo predefinido del servidor
+    se mantiene intacto. La persistencia de la selección del usuario se
+    gestiona en el frontend (localStorage).
     
     Returns: dict con info del modelo cargado o error
     """
@@ -83,17 +86,7 @@ def switch_model(new_model_name: str) -> dict:
     with _model_switch_lock:
         print(f"🔄 Cambiando modelo: {MODEL_NAME} → {new_model_name}...")
 
-        # 1. Actualizar model_profiles.json
-        try:
-            with open(_PROFILES_PATH, "r", encoding="utf-8") as f:
-                config = json.load(f)
-            config["active_model"] = new_model_name
-            with open(_PROFILES_PATH, "w", encoding="utf-8") as f:
-                json.dump(config, f, indent=2, ensure_ascii=False)
-        except Exception as e:
-            print(f"⚠️ No se pudo actualizar model_profiles.json: {e}")
-
-        # 2. Cargar nuevo modelo
+        # 1. Cargar nuevo modelo
         try:
             new_model = YOLO(model_path)
             MODEL = new_model
@@ -101,8 +94,10 @@ def switch_model(new_model_name: str) -> dict:
         except Exception as e:
             return {"ok": False, "error": f"Error al cargar modelo: {e}"}
 
-        # 3. Actualizar parámetros de inferencia desde el perfil
-        _, profile, _ = _load_model_config()
+        # 2. Actualizar parámetros de inferencia desde el perfil
+        #    (lee los profiles sin modificar active_model en el JSON)
+        _, _, all_profiles = _load_model_config()
+        profile = all_profiles.get(new_model_name, _DEFAULTS)
         YOLO_IMGSZ = profile.get("imgsz", _DEFAULTS["imgsz"])
         YOLO_EVERY_N_FRAMES = profile.get("skip_frames", _DEFAULTS["skip_frames"])
         CONFIDENCE_THRESHOLD = profile.get("confidence", _DEFAULTS["confidence"])
@@ -232,11 +227,9 @@ def run_detection_session(stream_url: str, max_frames: int = 5, save_log: bool =
             session_log.extend(detections)
             
             frame_count += 1
-            cv2.waitKey(1)  # ← Importante para que OpenCV no se bloquee
             
     finally:
         cap.release()
-        cv2.destroyAllWindows()
     
     # Guardar log (opcional)
     if save_log and session_log:
@@ -266,34 +259,45 @@ class FrameGrabber:
     Lee frames MJPEG via HTTP en un hilo separado.
     Usa urllib en vez de cv2.VideoCapture porque este último
     se cuelga indefinidamente con streams ESP32-CAM.
+    
+    Mejoras de robustez:
+    - Auto-reconnect si el stream HTTP muere (hasta 3 intentos)
+    - Flag _killed para cierre limpio desde force_release_grabber
+    - Timeout configurable en la conexión HTTP
     """
     def __init__(self, stream_url: str, timeout: int = 5, max_retries: int = 3):
         self.stream_url = stream_url
         self.timeout = timeout
+        self.max_retries = max_retries
         self._frame = None
         self._ret = False
         self._lock = threading.Lock()
         self._running = False
+        self._killed = False  # True = fue matado externamente, no intentar reconectar
         self._thread = None
         self._opened = False
         self._response = None
 
-        # Intentar abrir la conexión HTTP con reintentos
+        self._connect()
+
+    def _connect(self):
+        """Intenta abrir la conexión HTTP con reintentos."""
         import urllib.request
-        for attempt in range(max_retries):
+        for attempt in range(self.max_retries):
+            if self._killed:
+                return
             try:
-                req = urllib.request.Request(stream_url)
-                self._response = urllib.request.urlopen(req, timeout=timeout)
+                req = urllib.request.Request(self.stream_url)
+                self._response = urllib.request.urlopen(req, timeout=self.timeout)
                 self._opened = True
-                print(f"FrameGrabber conectado a {stream_url} (intento {attempt + 1})")
-                break
+                print(f"FrameGrabber conectado a {self.stream_url} (intento {attempt + 1})")
+                return
             except Exception as e:
-                print(f"FrameGrabber intento {attempt + 1}/{max_retries} fallo: {e}")
-                if attempt < max_retries - 1:
+                print(f"FrameGrabber intento {attempt + 1}/{self.max_retries} fallo: {e}")
+                if attempt < self.max_retries - 1:
                     time.sleep(1)
-                else:
-                    print(f"FrameGrabber: no se pudo conectar tras {max_retries} intentos")
-                    self._opened = False
+        print(f"FrameGrabber: no se pudo conectar tras {self.max_retries} intentos")
+        self._opened = False
 
     @property
     def is_opened(self):
@@ -308,43 +312,68 @@ class FrameGrabber:
         return self
 
     def _loop(self):
-        """Lee el stream MJPEG y decodifica cada frame JPEG."""
-        buf = b''
-        while self._running and self._response:
+        """Lee el stream MJPEG y decodifica cada frame JPEG.
+        Si el stream muere y no fue matado externamente, intenta reconectar."""
+        while self._running and not self._killed:
+            buf = b''
             try:
-                chunk = self._response.read(4096)
-                if not chunk:
-                    print("FrameGrabber: stream cerrado por el servidor")
-                    break
-                buf += chunk
-
-                # Buscar frames JPEG completos (SOI=FFD8, EOI=FFD9)
-                while True:
-                    soi = buf.find(b'\xff\xd8')  # Start of JPEG
-                    eoi = buf.find(b'\xff\xd9', soi + 2 if soi >= 0 else 0)  # End of JPEG
-                    if soi < 0 or eoi < 0:
+                while self._running and not self._killed and self._response:
+                    chunk = self._response.read(4096)
+                    if not chunk:
+                        print("FrameGrabber: stream cerrado por el servidor")
                         break
-                    # Extraer el JPEG completo
-                    jpeg_data = buf[soi:eoi + 2]
-                    buf = buf[eoi + 2:]
+                    buf += chunk
 
-                    # Decodificar con OpenCV
-                    frame = cv2.imdecode(
-                        np.frombuffer(jpeg_data, dtype=np.uint8),
-                        cv2.IMREAD_COLOR
-                    )
-                    if frame is not None:
-                        with self._lock:
-                            self._ret = True
-                            self._frame = frame
+                    # Buscar frames JPEG completos (SOI=FFD8, EOI=FFD9)
+                    while True:
+                        soi = buf.find(b'\xff\xd8')
+                        eoi = buf.find(b'\xff\xd9', soi + 2 if soi >= 0 else 0)
+                        if soi < 0 or eoi < 0:
+                            break
+                        jpeg_data = buf[soi:eoi + 2]
+                        buf = buf[eoi + 2:]
 
-                # Evitar que el buffer crezca sin límite
-                if len(buf) > 500000:
-                    buf = buf[-100000:]
+                        frame = cv2.imdecode(
+                            np.frombuffer(jpeg_data, dtype=np.uint8),
+                            cv2.IMREAD_COLOR
+                        )
+                        if frame is not None:
+                            with self._lock:
+                                self._ret = True
+                                self._frame = frame
+
+                    # Evitar que el buffer crezca sin límite
+                    if len(buf) > 500000:
+                        buf = buf[-100000:]
 
             except Exception as e:
+                if self._killed:
+                    break
                 print(f"FrameGrabber error: {e}")
+
+            # Si fue matado externamente, salir sin reconectar
+            if self._killed:
                 break
+
+            # Auto-reconnect: intentar reconectar si el stream murió inesperadamente
+            print("FrameGrabber: stream perdido, intentando reconectar...")
+            try:
+                if self._response:
+                    self._response.close()
+            except:
+                pass
+            self._response = None
+            self._opened = False
+
+            time.sleep(1.0)  # Dar tiempo al ESP32 para liberar su socket
+            if self._killed:
+                break
+
+            self._connect()
+            if not self._opened:
+                print("FrameGrabber: reconexión fallida, cerrando")
+                break
+            print("FrameGrabber: reconectado correctamente")
 
         self._running = False
 
@@ -356,9 +385,10 @@ class FrameGrabber:
             return False, None
 
     def release(self):
+        self._killed = True
         self._running = False
         if self._thread:
-            self._thread.join(timeout=2)
+            self._thread.join(timeout=3)
         if self._response:
             try:
                 self._response.close()
@@ -423,6 +453,7 @@ def stream_yolo_frames(stream_url: str, confidence: float = None):
     - Hilo dedicado para lectura (siempre frame más reciente)
     - YOLO solo cada N frames (los intermedios reusan boxes cacheados)
     - Resolución reducida para inferencia
+    - Auto-exit si el grabber muere o es matado externamente
     """
     global _latest_detections, _active_grabber
 
@@ -432,9 +463,9 @@ def stream_yolo_frames(stream_url: str, confidence: float = None):
     # (el ESP32-CAM solo admite 1 cliente de stream simultáneo)
     force_release_grabber()
     # Dar tiempo al ESP32 para liberar el socket
-    time.sleep(0.3)
+    time.sleep(0.5)
 
-    grabber = FrameGrabber(stream_url)
+    grabber = FrameGrabber(stream_url, timeout=8, max_retries=4)
     if not grabber.is_opened:
         error_frame = _create_error_frame("No se pudo conectar al ESP32")
         _, jpeg = cv2.imencode('.jpg', error_frame)
@@ -456,21 +487,27 @@ def stream_yolo_frames(stream_url: str, confidence: float = None):
     total_frames = 0
     cached_detections = []
     consecutive_fails = 0
+    last_frame_time = time.time()
 
     try:
         while True:
-            # Si el grabber fue liberado externamente (reconnect), salir
+            # Si el grabber fue matado externamente (reconnect/toggle), salir inmediatamente
+            if grabber._killed:
+                print("FrameGrabber matado externamente, cerrando stream YOLO")
+                break
+
+            # Si el hilo del grabber murió y ya teníamos frames, salir
             if not grabber._running and total_frames > 0:
-                print("FrameGrabber detenido externamente, cerrando stream...")
+                print("FrameGrabber detenido, cerrando stream YOLO")
                 break
 
             ret, frame = grabber.read()
             if not ret:
                 consecutive_fails += 1
-                if consecutive_fails > 50:  # ~1s sin frames
-                    print("Demasiados fallos, cerrando stream...")
-                    # Enviar frame de "desconectado" para que el frontend lo vea
-                    disconnect_frame = _create_error_frame("Camara desconectada - reconectando...")
+                # ~3 segundos sin frames antes de rendirse (150 * 0.02s)
+                if consecutive_fails > 150:
+                    print("Demasiados fallos consecutivos, cerrando stream YOLO")
+                    disconnect_frame = _create_error_frame("Camara desconectada")
                     _, jpeg = cv2.imencode('.jpg', disconnect_frame)
                     yield (b'--frame\r\n'
                            b'Content-Type: image/jpeg\r\n\r\n' + jpeg.tobytes() + b'\r\n')
@@ -479,14 +516,19 @@ def stream_yolo_frames(stream_url: str, confidence: float = None):
                 continue
 
             consecutive_fails = 0
+            last_frame_time = time.time()
             total_frames += 1
 
             # ── Ejecutar YOLO solo cada N frames ──
             if total_frames % YOLO_EVERY_N_FRAMES == 0:
-                annotated, detections = process_frame_visual(frame, conf_threshold)
-                cached_detections = detections
-                with _detections_lock:
-                    _latest_detections = detections
+                try:
+                    annotated, detections = process_frame_visual(frame, conf_threshold)
+                    cached_detections = detections
+                    with _detections_lock:
+                        _latest_detections = detections
+                except Exception as e:
+                    print(f"Error en YOLO inference: {e}")
+                    annotated = _draw_cached_boxes(frame, cached_detections)
             else:
                 # Reusar boxes cacheados (muy rápido, solo dibujo)
                 annotated = _draw_cached_boxes(frame, cached_detections)

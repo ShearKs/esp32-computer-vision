@@ -1,8 +1,10 @@
 
 export interface NetworkProfile {
   name: string;
+  comment: string;
   backend_ip: string;
   esp32_ip: string;
+  esp32_stream_port: number;
 }
 
 export interface ConfigResponse {

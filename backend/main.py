@@ -1,16 +1,20 @@
 import asyncio
 import json
+import os
+import shutil
 import time
 import urllib.request
 import httpx
 import logging
-from fastapi import FastAPI, BackgroundTasks, HTTPException, Query
+from fastapi import FastAPI, BackgroundTasks, File, HTTPException, Query, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
-import requests
 import uvicorn
 from config import settings, NETWORK_PROFILES, ACTIVE_PROFILE, save_active_config, save_profiles, load_profiles, PROFILES_FILE, get_local_ip
 from core_pipeline import run_detection_session, stream_yolo_frames, get_latest_detections, force_release_grabber, switch_model, get_active_model_name
+
+# Reducir logs repetitivos de uvicorn (cada petición /health genera un log)
+logging.getLogger("uvicorn.access").setLevel(logging.WARNING)
 
 app = FastAPI()
 
@@ -27,7 +31,6 @@ async def startup_event():
 _current_profile = ACTIVE_PROFILE
 
 # Cargar estado persistido desde active_config.json
-import os, json as _json
 from config import ACTIVE_CONFIG_FILE
 def _auto_path(port: int) -> str:
     """Auto-detecta el path del stream según el puerto.
@@ -38,7 +41,7 @@ def _auto_path(port: int) -> str:
 
 try:
     with open(ACTIVE_CONFIG_FILE) as _f:
-        _saved = _json.load(_f)
+        _saved = json.load(_f)
     _current_esp32_ip = _saved.get("esp32_ip", settings.esp32_ip)
     _current_esp32_port = _saved.get("esp32_port", settings.esp32_stream_port)
     # SIEMPRE auto-detectar el path basándose en el puerto para evitar desincronización
@@ -59,32 +62,24 @@ def _persist_active():
 # Tracking del estado del stream YOLO
 _yolo_stream_active = False
 
+# ── Generation counter: se incrementa en cada reconnect() ──
+# Todos los streams activos capturan su generación al inicio.
+# Si _stream_generation cambio, el stream se auto-termina.
+_stream_generation = 0
+
 def _get_esp32_url():
     return f"http://{_current_esp32_ip}:{_current_esp32_port}{_current_esp32_path}"
 
 def _check_esp32_reachable():
-    """Verifica rápidamente si el ESP32/cámara responde (timeout 2s)."""
-    # Intentar la raíz del puerto de stream — funciona con ESP32-CAM y IP Webcam
+    """Verifica rápidamente si el ESP32/cámara responde (timeout 1.5s).
+    Solo chequea el puerto del stream — un solo intento, sin fallback."""
     check_url = f"http://{_current_esp32_ip}:{_current_esp32_port}/"
     try:
         req = urllib.request.Request(check_url, method='GET')
-        with urllib.request.urlopen(req, timeout=2) as resp:
-            if resp.status == 200:
-                return True
+        with urllib.request.urlopen(req, timeout=1.5) as resp:
+            return resp.status == 200
     except Exception:
-        pass
-
-    # Fallback: intentar raíz en puerto 80 (ESP32-CAM servidor web)
-    if _current_esp32_port != 80:
-        try:
-            req = urllib.request.Request(f"http://{_current_esp32_ip}/", method='GET')
-            with urllib.request.urlopen(req, timeout=2) as resp:
-                if resp.status == 200:
-                    return True
-        except Exception:
-            pass
-
-    return False
+        return False
 
 # CORS
 app.add_middleware(
@@ -201,21 +196,27 @@ async def force_reconnect():
     El frontend debe llamar a esto y luego re-montar los componentes de stream.
     """
     global _yolo_stream_active, _current_esp32_ip, _current_esp32_port, _current_esp32_path
-    global _recent_detections
+    global _recent_detections, _stream_generation
 
-    # 1. Matar el FrameGrabber activo (libera el socket del ESP32)
+    # 1. Incrementar generación — TODOS los streams activos se auto-terminan
+    _stream_generation += 1
+    gen = _stream_generation
+    print(f"🔄 Reconnect: generación {gen}, matando streams activos...")
+
+    # 2. Matar el FrameGrabber activo (YOLO)
     await asyncio.to_thread(force_release_grabber)
 
-    # 2. Parar tracking del stream activo
+    # 3. Parar tracking del stream activo
     _yolo_stream_active = False
 
-    # 3. Esperar a que el ESP32 libere su socket de stream
+    # 4. Esperar para que los generadores activos detecten la nueva generación y salgan
+    #    El frontend también espera ~500ms adicionales antes de montar el nuevo stream
     await asyncio.sleep(0.5)
 
-    # 4. Re-leer config persistida (por si el usuario cambió la cámara)
+    # 5. Re-leer config persistida (por si el usuario cambió la cámara)
     try:
         with open(ACTIVE_CONFIG_FILE) as f:
-            saved = _json.load(f)
+            saved = json.load(f)
         _current_esp32_ip = saved.get("esp32_ip", _current_esp32_ip)
         _current_esp32_port = saved.get("esp32_port", _current_esp32_port)
         _current_esp32_path = _auto_path(_current_esp32_port)
@@ -223,14 +224,15 @@ async def force_reconnect():
     except Exception as e:
         print(f"🔄 Reconnect: no se pudo recargar config ({e}), usando actual")
 
-    # 5. Limpiar detecciones
+    # 6. Limpiar detecciones
     _recent_detections = []
 
-    # 6. Verificar si la cámara responde (ahora debería estar libre)
+    # 7. Verificar si la cámara responde (ahora debería estar libre)
     reachable = await asyncio.to_thread(_check_esp32_reachable)
 
     return {
         "status": "ok",
+        "generation": gen,
         "esp32_url": _get_esp32_url(),
         "camera_reachable": reachable,
         "message": "Pipeline reseteado. El próximo stream abrirá una conexión nueva."
@@ -268,12 +270,17 @@ async def yolo_stream(confidence: float = None):
     global _yolo_stream_active
     stream_url = _get_esp32_url()
     _yolo_stream_active = True
+    my_gen = _stream_generation  # Capturar generación actual
 
-    # Wrapper para marcar cuando el stream termina
     def _tracked_stream():
         global _yolo_stream_active
         try:
-            yield from stream_yolo_frames(stream_url, confidence)
+            for chunk in stream_yolo_frames(stream_url, confidence):
+                # Si la generación cambió, alguien hizo reconnect → salir
+                if _stream_generation != my_gen:
+                    print(f"Stream YOLO: generación obsoleta ({my_gen} vs {_stream_generation}), saliendo")
+                    break
+                yield chunk
         finally:
             _yolo_stream_active = False
             print("Stream YOLO finalizado")
@@ -290,28 +297,27 @@ async def yolo_stream(confidence: float = None):
 
 @app.get("/api/stream/raw")
 async def raw_stream_proxy():
-    """Proxy del stream de la cámara (ESP32 o IP Webcam) sin procesamiento YOLO.
+    """Proxy del stream de la cámara sin YOLO.
     
-    Esto resuelve el problema de CORS: el frontend solo habla con el backend,
-    y el backend se conecta a la cámara. Funciona tanto en navegador como en
-    Android nativo.
+    Usa generation counter para auto-terminarse cuando
+    reconnect() invalida la generación actual.
     """
     stream_url = _get_esp32_url()
+    my_gen = _stream_generation  # Capturar generación actual
 
     def _proxy_stream():
+        response = None
         try:
-            import urllib.request
             req = urllib.request.Request(stream_url)
             response = urllib.request.urlopen(req, timeout=10)
             
             buf = b''
-            while True:
+            while _stream_generation == my_gen:
                 chunk = response.read(4096)
                 if not chunk:
                     break
                 buf += chunk
 
-                # Buscar frames JPEG completos
                 while True:
                     soi = buf.find(b'\xff\xd8')
                     eoi = buf.find(b'\xff\xd9', soi + 2 if soi >= 0 else 0)
@@ -325,21 +331,29 @@ async def raw_stream_proxy():
                            b'Content-Length: ' + str(len(jpeg_data)).encode() + b'\r\n\r\n' +
                            jpeg_data + b'\r\n')
 
-                # Evitar que el buffer crezca sin límite
                 if len(buf) > 500000:
                     buf = buf[-100000:]
 
         except Exception as e:
-            print(f"Proxy stream error: {e}")
-            # Enviar un frame de error
-            import cv2
-            import numpy as np
-            error_frame = np.zeros((480, 640, 3), dtype=np.uint8)
-            cv2.putText(error_frame, f"Error: {str(e)[:50]}", (20, 240),
-                        cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 0, 255), 2)
-            _, jpeg = cv2.imencode('.jpg', error_frame)
-            yield (b'--frame\r\n'
-                   b'Content-Type: image/jpeg\r\n\r\n' + jpeg.tobytes() + b'\r\n')
+            if _stream_generation == my_gen:
+                print(f"Proxy stream error: {e}")
+                import cv2
+                import numpy as np
+                error_frame = np.zeros((480, 640, 3), dtype=np.uint8)
+                cv2.putText(error_frame, f"Error: {str(e)[:50]}", (20, 240),
+                            cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 0, 255), 2)
+                _, jpeg = cv2.imencode('.jpg', error_frame)
+                yield (b'--frame\r\n'
+                       b'Content-Type: image/jpeg\r\n\r\n' + jpeg.tobytes() + b'\r\n')
+            else:
+                print(f"Raw proxy: generación obsoleta ({my_gen} vs {_stream_generation}), saliendo")
+        finally:
+            if response:
+                try:
+                    response.close()
+                except:
+                    pass
+            print("Raw proxy stream finalizado")
 
     return StreamingResponse(
         _proxy_stream(),
@@ -349,9 +363,11 @@ async def raw_stream_proxy():
 
 @app.get("/api/stream/yolo/events")
 async def yolo_events():
+    my_gen = _stream_generation  # Auto-terminar si hay reconnect
+
     async def event_generator():
         last_sent = None
-        while True:
+        while _stream_generation == my_gen:
             detections = get_latest_detections()
             current_hash = json.dumps(detections, sort_keys=True)
             if current_hash != last_sent:
@@ -362,7 +378,7 @@ async def yolo_events():
                 })
                 yield f"data: {data}\n\n"
                 last_sent = current_hash
-            await asyncio.sleep(0.3)
+            await asyncio.sleep(0.5)
 
     return StreamingResponse(
         event_generator(),
@@ -379,7 +395,7 @@ async def yolo_events():
 # DETECCIÓN BAJO DEMANDA
 # ═══════════════════════════════════════════════════════
 
-_recent_detections = []
+_recent_detections: list = []
 
 @app.post("/api/detect")
 async def start_detection(
@@ -461,12 +477,130 @@ async def set_flash(state: str = Query(...)):
     )
 
 # ═══════════════════════════════════════════════════════
+# WIFI DEL ESP32 (proxy al endpoint del firmware)
+# ═══════════════════════════════════════════════════════
+
+@app.get("/api/esp32/wifi-status")
+async def esp32_wifi_status():
+    """Obtiene el estado WiFi actual del ESP32 (SSID, IP, RSSI, modo AP)."""
+    url = f"http://{_current_esp32_ip}/wifi-status"
+    try:
+        req = urllib.request.Request(url, method='GET')
+        with urllib.request.urlopen(req, timeout=3) as resp:
+            data = json.loads(resp.read().decode())
+            return data
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f"No se pudo conectar al ESP32: {str(e)}")
+
+@app.post("/api/esp32/wifi")
+async def set_esp32_wifi(ssid: str = Query(...), password: str = Query("")):
+    """Envía nuevas credenciales WiFi al ESP32. El ESP32 se reiniciará.
+    
+    Tras el reinicio el ESP32 puede tener una IP diferente.
+    Usa /api/esp32/scan para buscarlo en la red.
+    """
+    import urllib.parse
+    encoded_ssid = urllib.parse.quote(ssid, safe='')
+    encoded_pass = urllib.parse.quote(password, safe='')
+    url = f"http://{_current_esp32_ip}/wifi?ssid={encoded_ssid}&pass={encoded_pass}"
+    try:
+        req = urllib.request.Request(url, method='GET')
+        with urllib.request.urlopen(req, timeout=5) as resp:
+            data = json.loads(resp.read().decode())
+            return {
+                "status": "ok",
+                "esp32_response": data,
+                "message": f"WiFi del ESP32 cambiado a '{ssid}'. Se reiniciará en ~2s. Usa /api/esp32/scan para encontrarlo."
+            }
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f"Error al enviar credenciales: {str(e)}")
+
+@app.post("/api/esp32/wifi-reset")
+async def reset_esp32_wifi():
+    """Resetea el WiFi del ESP32 a las credenciales hardcodeadas por defecto."""
+    url = f"http://{_current_esp32_ip}/wifi-reset"
+    try:
+        req = urllib.request.Request(url, method='GET')
+        with urllib.request.urlopen(req, timeout=5) as resp:
+            data = json.loads(resp.read().decode())
+            return {
+                "status": "ok",
+                "esp32_response": data,
+                "message": "WiFi del ESP32 reseteado a defaults. Se reiniciará en ~2s."
+            }
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f"Error al resetear WiFi: {str(e)}")
+
+@app.post("/api/esp32/scan")
+async def scan_for_esp32(subnet: str = Query(None, description="Subred a escanear, ej: 192.168.1")):
+    """Escanea la subred buscando el ESP32 (por su endpoint /health).
+    
+    Útil después de cambiar el WiFi del ESP32, cuando su IP puede haber cambiado.
+    Si no se especifica subred, usa la del backend.
+    """
+    if not subnet:
+        # Auto-detectar subred del backend
+        local_ip = get_local_ip()
+        subnet = ".".join(local_ip.split(".")[:3])
+    
+    print(f"🔍 Escaneando subred {subnet}.* buscando ESP32...")
+    
+    found_ip = None
+    found_info = None
+    
+    async def check_ip(host: int):
+        ip = f"{subnet}.{host}"
+        url = f"http://{ip}/health"
+        try:
+            req = urllib.request.Request(url, method='GET')
+            with urllib.request.urlopen(req, timeout=1.5) as resp:
+                data = resp.read().decode()
+                if "camera" in data:
+                    return ip, data
+        except Exception:
+            pass
+        return None, None
+    
+    # Escanear en lotes de 30
+    for batch_start in range(1, 255, 30):
+        batch_end = min(batch_start + 30, 255)
+        tasks = []
+        for host in range(batch_start, batch_end):
+            tasks.append(asyncio.to_thread(check_ip, host))
+        results = await asyncio.gather(*tasks)
+        for ip, info in results:
+            if ip:
+                found_ip = ip
+                found_info = info
+                break
+        if found_ip:
+            break
+    
+    if found_ip:
+        global _current_esp32_ip
+        _current_esp32_ip = found_ip
+        _persist_active()
+        print(f"ESP32 encontrado en {found_ip}")
+        return {
+            "status": "found",
+            "ip": found_ip,
+            "subnet": subnet,
+            "esp32_url": _get_esp32_url(),
+            "health": found_info
+        }
+    else:
+        print(f"ESP32 no encontrado en {subnet}.*")
+        raise HTTPException(
+            status_code=404,
+            detail=f"ESP32 no encontrado en la subred {subnet}.*. ¿Está encendido y conectado al mismo WiFi?"
+        )
+
+# ═══════════════════════════════════════════════════════
 # MODELOS YOLO
 # ═══════════════════════════════════════════════════════
 @app.get("/api/models")
 async def list_models():
     """Lista los modelos YOLO disponibles y cuál está activo."""
-    import os
     models_dir = "models"
     if not os.path.exists(models_dir):
         return {"models": [], "active": get_active_model_name()}
@@ -563,6 +697,41 @@ async def move_esp32_car(direction: str, speed: int = 255):
                 raise HTTPException(503, "ESP32 no responde al stop")
 
     return {"status": "ok", "command": direction, "speed": speed}
+
+
+# ═══════════════════════════════════════════════════════
+# PARA HACER FOTOS QUE SERVIRAN PARA GUARDARLAS
+# SY HACER NUESTRO PROPIO DATASET
+# ═══════════════════════════════════════════════════════
+
+DATASET_DIR = "dataset_captures"
+os.makedirs(DATASET_DIR, exist_ok=True)
+@app.post("/api/dataset/capture")
+async def save_dataset_frame(file: UploadFile = File(...)):
+    """Recibe un frame enviado desde el frontend (móvil) 
+    y lo guarda en disco para crear un dataset propio para nuestras bainas de YOLO
+    """
+    try:
+        # Generamos en milisegundo un nombre random para evitar que se repitan
+        timestamp = int(time.time() * 1000)
+        # Nombre que va a tener la imagen en el dataset
+        filename = f"esp32_{timestamp}.jpg"
+        file_path =  os.path.join(DATASET_DIR, filename)
+
+        # Escribimos el archivo de forma asincrona en el disco
+        with open(file_path, "wb") as buffer:
+            shutil.copyfileobj(file.file, buffer)
+
+        print(f"📸 Nueva foto añadida al dataset: {file_path}")
+        return {
+            "status": "ok", 
+            "filename": filename, 
+            "message": "Imagen guardada correctamente en el servidor."
+        }
+
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error al guardar la foto: {str(e)}")
+
 
 
 @app.on_event("shutdown")

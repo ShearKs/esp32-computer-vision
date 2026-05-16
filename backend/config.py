@@ -40,7 +40,7 @@ def auto_update_profile_ip():
         return
     
     active = load_active_config()
-    profile_name = (active or {}).get('active_profile', ACTIVE_PROFILE if 'ACTIVE_PROFILE' in dir() else 'casa')
+    profile_name = (active or {}).get('active_profile', ACTIVE_PROFILE if 'ACTIVE_PROFILE' in dir() else 'casa-wifi-habitacion')
     
     changed = False
     if profile_name in profiles:
@@ -77,7 +77,7 @@ _active = load_active_config()
 if _active and _active.get("active_profile") in NETWORK_PROFILES:
     ACTIVE_PROFILE = _active["active_profile"]
 else:
-    ACTIVE_PROFILE = "casa"
+    ACTIVE_PROFILE = "casa-wifi-habitacion"
 
 class Settings(BaseSettings):
     backend_ip: str = NETWORK_PROFILES[ACTIVE_PROFILE]["backend_ip"]

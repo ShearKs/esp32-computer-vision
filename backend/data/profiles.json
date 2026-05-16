@@ -1,21 +1,22 @@
 {
-  "casa": {
-    "comment": "Sergio_router5G - WiFi (se auto-actualiza al arrancar backend)",
-    "backend_ip": "192.168.48.87",
+  "casa-wifi-habitacion": {
+    "comment": "Sergio_router",
+    "backend_ip": "192.168.1.173",
     "esp32_ip": "192.168.1.162",
     "esp32_stream_port": 81,
     "esp32_stream_path": "/stream"
   },
-  "casa-cable": {
-    "comment": "Sergio_router5G - Ethernet",
+  "casa-wifi-salon": {
+    "comment": "vodafoneBA5110",
     "backend_ip": "192.168.1.173",
-    "esp32_ip": "192.168.1.173",
+    "esp32_ip": "192.168.1.162",
     "esp32_stream_port": 81,
     "esp32_stream_path": "/stream"
   },
-  "instituto-5G": {
+  "instituto (WIFI_A_48_2G)": {
+    "comment": "",
     "backend_ip": "192.168.48.87",
-    "esp32_ip": "192.168.48.86",
+    "esp32_ip": "192.168.48.127",
     "esp32_stream_port": 81,
     "esp32_stream_path": "/stream"
   },
@@ -24,13 +25,6 @@
     "backend_ip": "192.168.0.50",
     "esp32_ip": "192.168.0.50",
     "esp32_stream_port": 8080,
-    "esp32_stream_path": "/video"
-  },
-  "ipwebcam": {
-    "comment": "IP Webcam gen\u00c3\u00a9rica - ajusta la IP seg\u00c3\u00ban tu m\u00c3\u00b3vil",
-    "backend_ip": "192.168.1.173",
-    "esp32_ip": "192.168.1.XXX",
-    "esp32_stream_port": 8080,
-    "esp32_stream_path": "/video"
+    "esp32_stream_path": "/stream"
   }
 }

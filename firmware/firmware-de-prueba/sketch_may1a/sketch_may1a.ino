@@ -3,9 +3,17 @@
   Author: Keyestudio
   Function: We can control the car to move forward/backward and turn left/right, turn on/off LED and speed up/down speed through wifi
   Speed level: we divide the maximum value of 255 into three parts, so each is 85. low speed 85, mid speed 170, high speed 255
+
+  WiFi configuration: Credentials are stored in NVS (non-volatile storage).
+  - On first boot, uses DEFAULT_SSID/DEFAULT_PASS below.
+  - Can be changed at runtime via GET /wifi?ssid=...&pass=...
+  - If WiFi fails after 15s, creates AP "RobotCar-Setup" for reconfiguration.
+  - mDNS: accessible as http://robot-car.local
 */
 #include "esp_camera.h"        //ESP32-CAM camera driver
 #include <WiFi.h>              //WiFi library, used to connect to network
+#include <Preferences.h>       //NVS storage for persistent WiFi credentials
+#include <ESPmDNS.h>           //mDNS for network discovery (robot-car.local)
 #include "esp_timer.h"         //timer library
 #include "img_converters.h"    //image converter library, used to convert JPEG
 #include "Arduino.h"           //Arduino library
@@ -14,16 +22,19 @@
 #include "soc/rtc_cntl_reg.h"  // Used to disable brownout detection for ESP32
 #include "esp_http_server.h"   // ESP32 HTTP server library, used to handle Web requests
 
-// #include <Preferences.h>
-// #include <WebServer.h>
+// ─── WiFi defaults (fallback if nothing saved in NVS) ───
+const char *DEFAULT_SSID = "Sergio_router";
+const char *DEFAULT_PASS = "ss9dksdwsxn4";
 
-// Replace with your network credentials
-const char *ssid = "Sergio_router";          // Set to your Wi-Fi name
-const char *password = "ss9dksdwsxn4";  // Set to your Wi-Fi passwords
-// const char *ssid = "WIFI_A48_2G";          // Set to your Wi-Fi name
-// const char *password = "Abracadabra123";  // Set to your Wi-Fi passwords
-// const char *ssid = "vodafoneBA5110";          // Set to your Wi-Fi name
-// const char *password = "Y7SJH9S55JQSHEEP";  // Set to your Wi-Fi passwords
+// ─── Dynamic WiFi credentials (loaded from NVS at boot) ─
+Preferences preferences;
+char wifi_ssid[64];
+char wifi_pass[64];
+bool isAPMode = false;  // true if running in AP fallback mode
+
+const char *AP_SSID = "RobotCar-Setup";    // AP name when WiFi fails
+const char *AP_PASS = "robot1234";          // AP password (min 8 chars)
+const char *MDNS_NAME = "robot-car";       // mDNS hostname → robot-car.local
 
 //Set camera pins
 #define PWDN_GPIO_NUM 32
@@ -92,6 +103,9 @@ httpd_handle_t stream_httpd = NULL;
 
 
 void startCameraServer();
+void loadWiFiCredentials();
+bool connectToWiFi(int timeoutMs = 15000);
+void startAPMode();
 
 // Configuración PWM ultrasónica para eliminar el pitido de los motores
 const int PWM_FREQ = 30000;   // 30 kHz (fuera del rango audible)
@@ -100,6 +114,54 @@ const int PWM_CH_R1 = 4;
 const int PWM_CH_R2 = 5;
 const int PWM_CH_L1 = 6;
 const int PWM_CH_L2 = 7;
+
+// ─── Load WiFi credentials from NVS ─────────────────────
+void loadWiFiCredentials() {
+  preferences.begin("wifi", true);  // read-only
+  String savedSSID = preferences.getString("ssid", DEFAULT_SSID);
+  String savedPass = preferences.getString("pass", DEFAULT_PASS);
+  preferences.end();
+
+  strncpy(wifi_ssid, savedSSID.c_str(), sizeof(wifi_ssid) - 1);
+  wifi_ssid[sizeof(wifi_ssid) - 1] = '\0';
+  strncpy(wifi_pass, savedPass.c_str(), sizeof(wifi_pass) - 1);
+  wifi_pass[sizeof(wifi_pass) - 1] = '\0';
+
+  Serial.printf("WiFi credentials loaded: SSID='%s'\n", wifi_ssid);
+}
+
+// ─── Try connecting to WiFi with timeout ─────────────────
+bool connectToWiFi(int timeoutMs) {
+  Serial.printf("Connecting to WiFi '%s'...\n", wifi_ssid);
+  WiFi.mode(WIFI_STA);
+  WiFi.begin(wifi_ssid, wifi_pass);
+
+  unsigned long start = millis();
+  while (WiFi.status() != WL_CONNECTED) {
+    if (millis() - start > (unsigned long)timeoutMs) {
+      Serial.println("\nWiFi connection TIMEOUT!");
+      WiFi.disconnect();
+      return false;
+    }
+    delay(500);
+    Serial.print(".");
+  }
+  Serial.println("");
+  Serial.println("WiFi connected!");
+  Serial.printf("IP: %s\n", WiFi.localIP().toString().c_str());
+  Serial.printf("RSSI: %d dBm\n", WiFi.RSSI());
+  return true;
+}
+
+// ─── Start AP fallback mode ──────────────────────────────
+void startAPMode() {
+  Serial.println("Starting AP fallback mode...");
+  WiFi.mode(WIFI_AP);
+  WiFi.softAP(AP_SSID, AP_PASS);
+  isAPMode = true;
+  Serial.printf("AP Mode active! Connect to WiFi '%s' (pass: '%s')\n", AP_SSID, AP_PASS);
+  Serial.printf("Configure at: http://%s\n", WiFi.softAPIP().toString().c_str());
+}
 
 void setup() {
   WRITE_PERI_REG(RTC_CNTL_BROWN_OUT_REG, 0);  //disable brownout detector
@@ -158,26 +220,31 @@ void setup() {
 
   // Video Orientation Configuration Code
   if (Video_Flip) {
-    // Reduce resolution to VGA for higher frame rate
     sensor_t *s = esp_camera_sensor_get();
     s->set_framesize(s, FRAMESIZE_VGA);
-
-    // Apply vertical flip only, disable horizontal mirror
-    s->set_vflip(s, 1);    // 1 = Enable vertical flip, 0 = Disable vertical flip
-    s->set_hmirror(s, 0);  // 1 = Enable horizontal mirror, 0 = Disable horizontal mirror
+    s->set_vflip(s, 1);
+    s->set_hmirror(s, 0);
   }
 
-  // Wi-Fi connection
-  WiFi.begin(ssid, password);
-  while (WiFi.status() != WL_CONNECTED) {
-    delay(500);
-    Serial.print(".");
+  // ─── WiFi: load saved credentials and connect ──────────
+  loadWiFiCredentials();
+
+  if (!connectToWiFi(15000)) {
+    // WiFi failed → start Access Point for reconfiguration
+    startAPMode();
   }
-  Serial.println("");
-  Serial.println("WiFi connected");
+
+  // ─── mDNS: register as robot-car.local ─────────────────
+  if (MDNS.begin(MDNS_NAME)) {
+    MDNS.addService("http", "tcp", 80);
+    MDNS.addService("http", "tcp", 81);
+    Serial.printf("mDNS: http://%s.local\n", MDNS_NAME);
+  } else {
+    Serial.println("mDNS failed to start");
+  }
 
   Serial.print("Camera Stream Ready! Go to: http://");
-  Serial.println(WiFi.localIP());
+  Serial.println(isAPMode ? WiFi.softAPIP() : WiFi.localIP());
 
   // Start streaming web server
   startCameraServer();
@@ -475,13 +542,111 @@ static esp_err_t action_handler(httpd_req_t *req) {
 static esp_err_t health_handler(httpd_req_t *req) {
   httpd_resp_set_hdr(req, "Access-Control-Allow-Origin", "*");
   httpd_resp_set_type(req, "application/json");
-  char resp[] = "{\"status\":\"ok\",\"camera\":true}";
+  char resp[128];
+  snprintf(resp, sizeof(resp),
+    "{\"status\":\"ok\",\"camera\":true,\"ap_mode\":%s}",
+    isAPMode ? "true" : "false");
   return httpd_resp_send(req, resp, strlen(resp));
+}
+
+// ─── WiFi status: devuelve SSID actual, IP, RSSI ────────
+static esp_err_t wifi_status_handler(httpd_req_t *req) {
+  httpd_resp_set_hdr(req, "Access-Control-Allow-Origin", "*");
+  httpd_resp_set_type(req, "application/json");
+
+  char resp[256];
+  if (isAPMode) {
+    snprintf(resp, sizeof(resp),
+      "{\"mode\":\"ap\",\"ap_ssid\":\"%s\",\"ip\":\"%s\",\"saved_ssid\":\"%s\"}",
+      AP_SSID, WiFi.softAPIP().toString().c_str(), wifi_ssid);
+  } else {
+    snprintf(resp, sizeof(resp),
+      "{\"mode\":\"sta\",\"ssid\":\"%s\",\"ip\":\"%s\",\"rssi\":%d,\"mac\":\"%s\"}",
+      wifi_ssid, WiFi.localIP().toString().c_str(), WiFi.RSSI(),
+      WiFi.macAddress().c_str());
+  }
+  return httpd_resp_send(req, resp, strlen(resp));
+}
+
+// ─── WiFi set: guarda nuevas credenciales y reinicia ────
+static esp_err_t wifi_set_handler(httpd_req_t *req) {
+  httpd_resp_set_hdr(req, "Access-Control-Allow-Origin", "*");
+  httpd_resp_set_type(req, "application/json");
+
+  char query[200];
+  int qlen = httpd_req_get_url_query_len(req) + 1;
+  if (qlen <= 1 || qlen > (int)sizeof(query)) {
+    char err[] = "{\"error\":\"Missing ssid and pass parameters\"}";
+    httpd_resp_set_status(req, "400 Bad Request");
+    return httpd_resp_send(req, err, strlen(err));
+  }
+  httpd_req_get_url_query_str(req, query, qlen);
+
+  // Parse SSID
+  char new_ssid[64] = {0};
+  char new_pass[64] = {0};
+  if (httpd_query_key_value(query, "ssid", new_ssid, sizeof(new_ssid)) != ESP_OK) {
+    char err[] = "{\"error\":\"Missing ssid parameter\"}";
+    httpd_resp_set_status(req, "400 Bad Request");
+    return httpd_resp_send(req, err, strlen(err));
+  }
+  // Password is optional (open networks)
+  httpd_query_key_value(query, "pass", new_pass, sizeof(new_pass));
+
+  // URL-decode (basic: replace + with space, %XX with chars)
+  // For simplicity, just handle + → space which covers most SSIDs
+  for (int i = 0; new_ssid[i]; i++) if (new_ssid[i] == '+') new_ssid[i] = ' ';
+  for (int i = 0; new_pass[i]; i++) if (new_pass[i] == '+') new_pass[i] = ' ';
+
+  Serial.printf("WiFi change requested: SSID='%s'\n", new_ssid);
+
+  // Save to NVS (persistent flash storage)
+  preferences.begin("wifi", false);  // read-write
+  preferences.putString("ssid", new_ssid);
+  preferences.putString("pass", new_pass);
+  preferences.end();
+
+  Serial.println("WiFi credentials saved to NVS. Restarting in 2 seconds...");
+
+  char resp[128];
+  snprintf(resp, sizeof(resp),
+    "{\"status\":\"ok\",\"ssid\":\"%s\",\"will_restart\":true,\"restart_in_ms\":2000}",
+    new_ssid);
+  httpd_resp_send(req, resp, strlen(resp));
+
+  // Restart after 2s to allow the response to be sent
+  delay(2000);
+  ESP.restart();
+  return ESP_OK;
+}
+
+// ─── WiFi reset: vuelve a las credenciales hardcodeadas ─
+static esp_err_t wifi_reset_handler(httpd_req_t *req) {
+  httpd_resp_set_hdr(req, "Access-Control-Allow-Origin", "*");
+  httpd_resp_set_type(req, "application/json");
+
+  // Clear NVS → next boot will use DEFAULT_SSID/DEFAULT_PASS
+  preferences.begin("wifi", false);
+  preferences.clear();
+  preferences.end();
+
+  Serial.printf("WiFi reset to defaults: SSID='%s'. Restarting in 2s...\n", DEFAULT_SSID);
+
+  char resp[128];
+  snprintf(resp, sizeof(resp),
+    "{\"status\":\"ok\",\"ssid\":\"%s\",\"will_restart\":true,\"restart_in_ms\":2000}",
+    DEFAULT_SSID);
+  httpd_resp_send(req, resp, strlen(resp));
+
+  delay(2000);
+  ESP.restart();
+  return ESP_OK;
 }
 
 void startCameraServer() {
   httpd_config_t config = HTTPD_DEFAULT_CONFIG();
   config.server_port = 80;
+  config.max_uri_handlers = 12;  // Increased for new WiFi endpoints
   
   httpd_uri_t index_uri = {
     .uri = "/",
@@ -504,6 +669,27 @@ void startCameraServer() {
     .user_ctx = NULL
   };
 
+  httpd_uri_t wifi_status_uri = {
+    .uri = "/wifi-status",
+    .method = HTTP_GET,
+    .handler = wifi_status_handler,
+    .user_ctx = NULL
+  };
+
+  httpd_uri_t wifi_set_uri = {
+    .uri = "/wifi",
+    .method = HTTP_GET,
+    .handler = wifi_set_handler,
+    .user_ctx = NULL
+  };
+
+  httpd_uri_t wifi_reset_uri = {
+    .uri = "/wifi-reset",
+    .method = HTTP_GET,
+    .handler = wifi_reset_handler,
+    .user_ctx = NULL
+  };
+
   httpd_uri_t stream_uri = {
     .uri = "/stream",
     .method = HTTP_GET,
@@ -523,7 +709,10 @@ void startCameraServer() {
     httpd_register_uri_handler(camera_httpd, &index_uri);
     httpd_register_uri_handler(camera_httpd, &cmd_uri);
     httpd_register_uri_handler(camera_httpd, &health_uri);
-    Serial.println("HTTP server started on port 80 (/, /action, /health)");
+    httpd_register_uri_handler(camera_httpd, &wifi_status_uri);
+    httpd_register_uri_handler(camera_httpd, &wifi_set_uri);
+    httpd_register_uri_handler(camera_httpd, &wifi_reset_uri);
+    Serial.println("HTTP server started on port 80 (/, /action, /health, /wifi-status, /wifi, /wifi-reset)");
   }
   config.server_port += 1;
   config.ctrl_port += 1;
