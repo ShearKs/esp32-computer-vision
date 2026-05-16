@@ -173,6 +173,25 @@ const AppMenu: React.FC = () => {
           <IonNote className="menu-section-label">VISIÓN</IonNote>
           <IonList lines="none" className="menu-list">
             <IonItem className="menu-item">
+              <IonIcon
+                slot="start"
+                icon={yoloEnabled ? eyeOutline : eyeOffOutline}
+                className="menu-icon"
+                style={{ color: yoloEnabled ? '#ff3b30' : '#888' }}
+              />
+              <IonLabel>
+                <h3>YOLO AI</h3>
+                <p className={yoloEnabled ? 'menu-status-active' : ''}>
+                  {yoloEnabled ? 'Detección activa' : 'Desactivado'}
+                </p>
+              </IonLabel>
+              <IonToggle
+                checked={yoloEnabled}
+                onIonChange={(e) => setYoloEnabled(e.detail.checked)}
+                color="danger"
+              />
+            </IonItem>
+            <IonItem className="menu-item">
               <IonIcon slot="start" icon={hardwareChipOutline} className="menu-icon" color= {yoloEnabled ? 'primary' : 'medium'} />
               <IonSelect className="select-conduction"
                           interface="popover"
