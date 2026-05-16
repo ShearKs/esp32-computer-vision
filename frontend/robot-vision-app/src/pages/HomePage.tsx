@@ -18,10 +18,15 @@ import { cameraOutline } from 'ionicons/icons';
 const Home: React.FC = () => {
   const sendCommand = (direction: Direction, speed: number) => {
     if (drivingMode === 'websocket') {
-      // TODO: implementar WebSocket para menor latencia
-      console.log('🔌 WebSocket mode not yet implemented, falling back to HTTP');
+      
+
+      
+      return;
+    }else{
+      // Modo http
+      ApiService.controlRobot(direction, speed).catch(() => { });
     }
-    ApiService.controlRobot(direction, speed).catch(() => { });
+    
   };
 
   const handleMove = (direction: Direction, speed: number, _x: number, _y: number) => {
@@ -29,6 +34,9 @@ const Home: React.FC = () => {
   };
 
   const handleStop = () => {
+
+
+
     sendCommand('stop', 0);
   };
 
@@ -224,7 +232,10 @@ const Home: React.FC = () => {
 
             {/* Columna derecha: Joystick */}
             <div className="controls-joystick">
-              <JoystickControl onMove={handleMove} onStop={handleStop} />
+              <JoystickControl 
+              onMove={handleMove} 
+              onStop={handleStop}
+              drivingMode={drivingMode} />
             </div>
 
           </div>

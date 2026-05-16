@@ -1,3 +1,4 @@
+import { DrivingMode } from "../context/SettingsContext";
 
 export interface NetworkProfile {
   name: string;
@@ -39,11 +40,12 @@ export interface YoloEvent {
   detections: Detection[];
   count: number;
 }
-export type Direction = 'forward' | 'backward' | 'left' | 'right' | 'stop';
+export type Direction = 'stop' | 'forward' | 'backward' | 'left' | 'right' | 'forward-left' | 'forward-right' | 'backward-left' | 'backward-right';
 export interface JoystickControlProps {
     onMove: (direction: Direction, speed: number, x: number, y: number) => void;
     onStop: () => void;
     onError?: (error: Error) => void;
+    drivingMode: DrivingMode;
 }
 
 

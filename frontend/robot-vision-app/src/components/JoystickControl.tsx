@@ -4,13 +4,11 @@ import { IonCard, IonCardContent } from '@ionic/react';
 import './JoystickControl.css';
 import { Direction, JoystickControlProps } from '../types/interfaces';
 
-
 const JOYSTICK_RADIUS = 75;
 const STICK_RADIUS = 34;
 const DEAD_ZONE = 0.15;
-const SEND_INTERVAL_MS = 80; // Intervalo único de envío (12.5 cmd/s)
 
-export const JoystickControl: React.FC<JoystickControlProps> = ({ onMove, onStop }) => {
+export const JoystickControl: React.FC<JoystickControlProps> = ({ onMove, onStop, drivingMode }) => {
 
     // ─── Estado visual (React state) ───
     const [speed, setSpeed] = useState(0);
@@ -19,11 +17,11 @@ export const JoystickControl: React.FC<JoystickControlProps> = ({ onMove, onStop
     const [isDragging, setIsDragging] = useState(false);
     const [activeButton, setActiveButton] = useState<Direction | null>(null);
 
-    // ─── Refs para lógica de envío (sin re-renders) ───
+    // ─── Refs para lógica de envío (sin re-renders constantes) ───
     const joystickRef = useRef<HTMLDivElement>(null);
     const isDraggingRef = useRef(false);
     const currentCmdRef = useRef<{ dir: Direction; speed: number; sx: number; sy: number }>({ dir: 'stop', speed: 0, sx: 0, sy: 0 });
-    const lastSentRef = useRef('stop:0'); // Último comando realmente enviado
+    const lastSentRef = useRef('stop:0:0:0'); // Cache extendido para registrar coordenadas
     const sendIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
     // Refs para D-pad
@@ -32,7 +30,7 @@ export const JoystickControl: React.FC<JoystickControlProps> = ({ onMove, onStop
     const dpadLeftRef = useRef<HTMLButtonElement>(null);
     const dpadRightRef = useRef<HTMLButtonElement>(null);
 
-    // ─── Cálculo de posición ───
+    // ─── Cálculo de posición relativa del dedo ───
     const getRelativePosition = useCallback((clientX: number, clientY: number) => {
         if (!joystickRef.current) return { x: 0, y: 0 };
         const rect = joystickRef.current.getBoundingClientRect();
@@ -41,68 +39,107 @@ export const JoystickControl: React.FC<JoystickControlProps> = ({ onMove, onStop
         return { x: rawX, y: rawY };
     }, []);
 
-    const snapToCardinal = useCallback((x: number, y: number) => {
+    // ─── Procesador Analógico Puro (360° sin restricciones de dirección) ───
+    const processCoordinates = useCallback((x: number, y: number) => {
         const magnitude = Math.sqrt(x * x + y * y);
         if (magnitude < DEAD_ZONE) return { sx: 0, sy: 0, dir: 'stop' as Direction, mag: 0 };
 
-        let dir: Direction, sx = 0, sy = 0;
-        if (Math.abs(x) > Math.abs(y)) {
-            dir = x > 0 ? 'right' : 'left';
-            sx = Math.max(-1, Math.min(1, x));
-        } else {
-            dir = y > 0 ? 'forward' : 'backward';
-            sy = Math.max(-1, Math.min(1, y));
-        }
-        return { sx, sy, dir, mag: Math.min(magnitude, 1) };
-    }, []);
+        const magClamped = Math.min(magnitude, 1);
 
-    // ─── Actualizar estado actual (NO envía nada, solo actualiza refs) ───
+
+        // En el modo HTTP todo está limitado a 4 direcciones
+        if (drivingMode === 'http') {
+            let dir: Direction;
+
+            let sx = 0;
+            let sy = 0;
+
+            if (Math.abs(x) > Math.abs(y)) {
+                dir = x > 0 ? 'right' : 'left';
+                // El stick visual se clava por completo en la línea horizontal del eje X
+                sx = (x > 0 ? 1 : -1) * magClamped;
+            } else {
+                dir = y > 0 ? 'forward' : 'backward';
+                // El stick visual se clava por completo en la línea vertical del eje Y
+                sy = (y > 0 ? 1 : -1) * magClamped;
+            }
+
+            return { sx, sy, dir, mag: magClamped };
+
+
+        }
+        // MODO REAL-TIME con websockets: dirección libre en 360°
+        else {
+            const sx = x / (magnitude > 1 ? magnitude : 1);
+            const sy = y / (magnitude > 1 ? magnitude : 1);
+
+            // Mapeo angular de 8 cuadrantes únicamente para pintar las etiquetas de texto en la UI
+            const angle = Math.atan2(y, x) * (180 / Math.PI);
+            let dir: Direction = 'stop';
+
+            if (angle >= -22.5 && angle < 22.5) dir = 'right';
+            else if (angle >= 22.5 && angle < 67.5) dir = 'forward-right';
+            else if (angle >= 67.5 && angle < 112.5) dir = 'forward';
+            else if (angle >= 112.5 && angle < 157.5) dir = 'forward-left';
+            else if (angle >= 157.5 || angle < -157.5) dir = 'left';
+            else if (angle >= -157.5 && angle < -112.5) dir = 'backward-left';
+            else if (angle >= -112.5 && angle < -67.5) dir = 'backward';
+            else if (angle >= -67.5 && angle < -22.5) dir = 'backward-right';
+
+            return { sx, sy, dir, mag: magClamped };
+        }
+    }, [drivingMode]);
+
+    // ─── Actualizar estado actual de la palanca ───
     const updateJoystickState = useCallback((clientX: number, clientY: number) => {
         const { x, y } = getRelativePosition(clientX, clientY);
-        const { sx, sy, dir, mag } = snapToCardinal(x, y);
+        const { sx, sy, dir, mag } = processCoordinates(x, y);
 
-        // Curva: mag^1.5 → 0-255 (PWM), mínimo 40 al salir de dead zone
+        // Curva de respuesta PWM: mag^1.5 → Mínimo 40 para vencer la inercia estática de los motores
         const rawSpeed = Math.round(Math.pow(mag, 1.5) * 255);
         const computedSpeed = mag > 0 ? Math.max(40, rawSpeed) : 0;
 
-        // Actualizar refs (para el intervalo de envío)
         currentCmdRef.current = { dir, speed: computedSpeed, sx, sy };
 
-        // Actualizar state (para la UI)
         setStickPos({ x: sx, y: sy });
         setSpeed(computedSpeed);
         setDirection(dir);
-    }, [getRelativePosition, snapToCardinal]);
+    }, [getRelativePosition, processCoordinates]);
 
-    // ─── Intervalo de envío: lee refs y manda al backend ───
+    // ─── Bucle inteligente adaptable (HTTP vs WebSocket) ───
     const startSendLoop = useCallback(() => {
-        if (sendIntervalRef.current) return; // Ya corriendo
-        // Enviar inmediatamente el primer comando
+        if (sendIntervalRef.current) return;
+
         const cmd = currentCmdRef.current;
-        const key = `${cmd.dir}:${cmd.speed}`;
+        const initialKey = `${cmd.dir}:${cmd.speed}:${cmd.sx.toFixed(2)}:${cmd.sy.toFixed(2)}`;
         if (cmd.dir !== 'stop') {
             onMove(cmd.dir, cmd.speed, cmd.sx, cmd.sy);
-            lastSentRef.current = key;
+            lastSentRef.current = initialKey;
         }
-        // Luego cada SEND_INTERVAL_MS
+
+        const intervalMs = drivingMode === 'http' ? 150 : 80;
+
         sendIntervalRef.current = setInterval(() => {
             const c = currentCmdRef.current;
-            const k = `${c.dir}:${c.speed}`;
+            const k = `${c.dir}:${c.speed}:${c.sx.toFixed(2)}:${c.sy.toFixed(2)}`;
+
             if (c.dir === 'stop') {
-                if (lastSentRef.current !== 'stop:0') {
+                if (!lastSentRef.current.startsWith('stop:')) {
                     onStop();
-                    lastSentRef.current = 'stop:0';
+                    lastSentRef.current = 'stop:0:0:0';
                 }
-            } else if (k !== lastSentRef.current) {
-                // Solo enviar si cambió dirección o velocidad
+            }
+            else if (k !== lastSentRef.current) {
                 onMove(c.dir, c.speed, c.sx, c.sy);
                 lastSentRef.current = k;
-            } else {
-                // Keepalive: mismo comando → reenviar para que watchdog no pare motores
-                onMove(c.dir, c.speed, c.sx, c.sy);
             }
-        }, SEND_INTERVAL_MS);
-    }, [onMove, onStop]);
+            else {
+                if (drivingMode !== 'http') {
+                    onMove(c.dir, c.speed, c.sx, c.sy);
+                }
+            }
+        }, intervalMs);
+    }, [onMove, onStop, drivingMode]);
 
     const stopSendLoop = useCallback(() => {
         if (sendIntervalRef.current) {
@@ -111,7 +148,15 @@ export const JoystickControl: React.FC<JoystickControlProps> = ({ onMove, onStop
         }
     }, []);
 
-    // ─── Handlers ───
+    // Reiniciar dinámicamente el bucle si cambias el modo desde el menú en pleno arrastre
+    useEffect(() => {
+        if (isDraggingRef.current) {
+            stopSendLoop();
+            startSendLoop();
+        }
+    }, [drivingMode, startSendLoop, stopSendLoop]);
+
+    // ─── Handlers Eventos Mouse / Touch ───
     const handleStart = useCallback((clientX: number, clientY: number) => {
         isDraggingRef.current = true;
         setIsDragging(true);
@@ -132,12 +177,11 @@ export const JoystickControl: React.FC<JoystickControlProps> = ({ onMove, onStop
         setDirection('stop');
         currentCmdRef.current = { dir: 'stop', speed: 0, sx: 0, sy: 0 };
         stopSendLoop();
-        // Stop inmediato
         onStop();
-        lastSentRef.current = 'stop:0';
+        lastSentRef.current = 'stop:0:0:0';
     }, [onStop, stopSendLoop]);
 
-    // ─── Touch nativo en joystick (passive: false) ───
+    // Touch nativo en contenedor del joystick
     useEffect(() => {
         const el = joystickRef.current;
         if (!el) return;
@@ -146,22 +190,12 @@ export const JoystickControl: React.FC<JoystickControlProps> = ({ onMove, onStop
         return () => el.removeEventListener('touchstart', onTS);
     }, [handleStart]);
 
-    // ─── Global move/end ───
-    // IMPORTANTE: solo llamar handleEnd si el joystick está activo (isDraggingRef.current)
-    // para evitar enviar comandos 'stop' al tocar cualquier parte de la interfaz.
+    // Captura global de movimientos fuera de la zona del joystick
     useEffect(() => {
-        const onMM = (e: MouseEvent) => {
-            if (isDraggingRef.current) handleMoveEvent(e.clientX, e.clientY);
-        };
-        const onMU = () => {
-            if (isDraggingRef.current) handleEnd();
-        };
-        const onTM = (e: TouchEvent) => {
-            if (isDraggingRef.current) { e.preventDefault(); handleMoveEvent(e.touches[0].clientX, e.touches[0].clientY); }
-        };
-        const onTE = () => {
-            if (isDraggingRef.current) handleEnd();
-        };
+        const onMM = (e: MouseEvent) => { if (isDraggingRef.current) handleMoveEvent(e.clientX, e.clientY); };
+        const onMU = () => { if (isDraggingRef.current) handleEnd(); };
+        const onTM = (e: TouchEvent) => { if (isDraggingRef.current) { e.preventDefault(); handleMoveEvent(e.touches[0].clientX, e.touches[0].clientY); } };
+        const onTE = () => { if (isDraggingRef.current) handleEnd(); };
 
         window.addEventListener('mousemove', onMM);
         window.addEventListener('mouseup', onMU);
@@ -175,15 +209,19 @@ export const JoystickControl: React.FC<JoystickControlProps> = ({ onMove, onStop
         };
     }, [handleMoveEvent, handleEnd]);
 
-    // Cleanup al desmontar
     useEffect(() => () => stopSendLoop(), [stopSendLoop]);
 
-    // ─── D-Pad ───
+    // ─── Lógica D-Pad (Mantiene rumbos fijos de seguridad) ───
     const handleDpadDown = useCallback((dir: Direction) => {
         setActiveButton(dir);
         setDirection(dir);
-        setSpeed(40);
-        currentCmdRef.current = { dir, speed: 125, sx: dir === 'left' ? -1 : dir === 'right' ? 1 : 0, sy: dir === 'forward' ? 1 : dir === 'backward' ? -1 : 0 };
+        setSpeed(90);
+        currentCmdRef.current = {
+            dir,
+            speed: 90,
+            sx: dir === 'left' ? -1 : dir === 'right' ? 1 : 0,
+            sy: dir === 'forward' ? 1 : dir === 'backward' ? -1 : 0
+        };
         startSendLoop();
     }, [startSendLoop]);
 
@@ -194,14 +232,13 @@ export const JoystickControl: React.FC<JoystickControlProps> = ({ onMove, onStop
         currentCmdRef.current = { dir: 'stop', speed: 0, sx: 0, sy: 0 };
         stopSendLoop();
         onStop();
-        lastSentRef.current = 'stop:0';
+        lastSentRef.current = 'stop:0:0:0';
     }, [onStop, stopSendLoop]);
 
-    // D-pad touch nativo
     useEffect(() => {
-        const refs: { ref: React.RefObject<HTMLButtonElement | null>; dir: Direction }[] = [
-            { ref: dpadUpRef, dir: 'forward' }, { ref: dpadDownRef, dir: 'backward' },
-            { ref: dpadLeftRef, dir: 'left' }, { ref: dpadRightRef, dir: 'right' },
+        const refs = [
+            { ref: dpadUpRef, dir: 'forward' as Direction }, { ref: dpadDownRef, dir: 'backward' as Direction },
+            { ref: dpadLeftRef, dir: 'left' as Direction }, { ref: dpadRightRef, dir: 'right' as Direction },
         ];
         const cleanups: (() => void)[] = [];
         for (const { ref, dir } of refs) {
@@ -216,7 +253,7 @@ export const JoystickControl: React.FC<JoystickControlProps> = ({ onMove, onStop
         return () => cleanups.forEach(fn => fn());
     }, [handleDpadDown, handleDpadUp]);
 
-    // ─── Visual ───
+    // ─── Estilos y Renderizado Dinámico ───
     const speedColor = speed < 80 ? '#4ade80' : speed < 160 ? '#facc15' : '#f87171';
     const stickPixelX = stickPos.x * JOYSTICK_RADIUS;
     const stickPixelY = -stickPos.y * JOYSTICK_RADIUS;

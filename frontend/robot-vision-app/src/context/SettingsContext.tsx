@@ -44,6 +44,10 @@ const SettingsContext = createContext<SettingsContextType>({
 const LS_YOLO_ENABLED = 'robot_yolo_enabled';
 const LS_YOLO_MODEL = 'robot_yolo_model';
 
+// Añadimos persistencia para recordar que modo teníamos activo
+const LS_DRIVING_MODE = 'robot_driving_mode';
+
+
 export const SettingsProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   // Leer valores iniciales desde localStorage (o usar defaults)
   const [yoloEnabled, _setYoloEnabled] = useState(() => {
@@ -52,7 +56,18 @@ export const SettingsProvider: React.FC<{ children: React.ReactNode }> = ({ chil
   });
   const [flashActive, setFlashActive] = useState(false);
   const [reloadKey, setReloadKey] = useState(0);
-  const [drivingMode, setDrivingMode] = useState<DrivingMode>('websocket');
+
+
+  const [drivingMode, _setDrivingMode] = useState<DrivingMode>(() => {
+    const stored = localStorage.getItem(LS_DRIVING_MODE);
+    return (stored as DrivingMode) || 'websocket';
+  });
+
+  const setDrivingMode = useCallback((mode: DrivingMode) => {
+    _setDrivingMode(mode);
+    localStorage.setItem(LS_DRIVING_MODE, mode);
+  }, []);
+
   const [yoloModel, _setYoloModel] = useState(() => {
     return localStorage.getItem(LS_YOLO_MODEL) || '';
   });

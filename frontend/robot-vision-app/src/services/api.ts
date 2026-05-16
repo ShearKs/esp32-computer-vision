@@ -304,7 +304,7 @@ export const ApiService = {
       .catch(() => { });
   },
 
-
+  
   subscribeDetections(callback: DetectionsCallback): () => void {
     const base = ApiService.getBaseUrl();
     const es = new EventSource(`${base}/api/stream/yolo/events`);
