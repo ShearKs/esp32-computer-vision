@@ -16,30 +16,8 @@ import './HomePage.css';
 import { cameraOutline } from 'ionicons/icons';
 
 const Home: React.FC = () => {
-  const sendCommand = (direction: Direction, speed: number) => {
-    if (drivingMode === 'websocket') {
-      
 
-      
-      return;
-    }else{
-      // Modo http
-      ApiService.controlRobot(direction, speed).catch(() => { });
-    }
-    
-  };
-
-  const handleMove = (direction: Direction, speed: number, _x: number, _y: number) => {
-    sendCommand(direction, speed);
-  };
-
-  const handleStop = () => {
-
-
-
-    sendCommand('stop', 0);
-  };
-
+  // ─── Estado de conexión y UI ───
   const [ready, setReady] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [statusMsg, setStatusMsg] = useState('Conectando con el servidor...');
@@ -49,6 +27,49 @@ const Home: React.FC = () => {
   const [presentToast] = useIonToast();
 
   const { yoloEnabled, reloadKey, drivingMode, isCapturing, capturePhoto } = useSettings();
+
+  // ─── WebSocket para modo real-time ───
+  const wsRef = useRef<WebSocket | null>(null);
+  const [wsConnected, setWsConnected] = useState(false);
+
+  // ─── Funciones de envío de movimiento ───
+
+  /**
+   * Arcade-drive mixing: convierte joystick (sx, sy, speed) en PWM diferencial (L, R).
+   * - sy: eje adelante/atrás (-1..1)
+   * - sx: eje izquierda/derecha (-1..1)
+   * - speed: magnitud PWM (0..255)
+   * Normaliza para que ni L ni R superen `speed`.
+   */
+  const sendWsMotor = (sx: number, sy: number, speed: number) => {
+    const ws = wsRef.current;
+    if (!ws || ws.readyState !== WebSocket.OPEN) return;
+
+    const rawLeft = sy + sx;
+    const rawRight = sy - sx;
+    const maxMag = Math.max(Math.abs(rawLeft), Math.abs(rawRight), 1);
+    const left = Math.round((rawLeft / maxMag) * speed);
+    const right = Math.round((rawRight / maxMag) * speed);
+    ws.send(`L:${left},R:${right}`);
+  };
+
+  const handleMove = (direction: Direction, speed: number, sx: number, sy: number) => {
+    if (drivingMode === 'websocket') {
+      // Enviar PWM diferencial directamente al ESP32 vía WS relay
+      sendWsMotor(sx, sy, speed);
+    } else {
+      // Modo HTTP: 4 direcciones cardinales clásicas
+      ApiService.moveHTTP(direction, speed).catch(() => { });
+    }
+  };
+
+  const handleStop = () => {
+    if (drivingMode === 'websocket') {
+      sendWsMotor(0, 0, 0);
+    } else {
+      ApiService.moveHTTP('stop', 0).catch(() => { });
+    }
+  };
 
   const handleRetry = () => {
     setReady(false);
@@ -99,8 +120,6 @@ const Home: React.FC = () => {
       } catch { /* continuar igualmente */ }
 
       // 3. Montar el nuevo stream (raw o YOLO) con un key fresco
-      //    Un solo cambio de key — el anterior ya se desmontó porque React
-      //    condiciona el render con yoloEnabled
       if (!cancelled) setStreamKey(prev => prev + 1);
     };
     switchStream();
@@ -109,7 +128,7 @@ const Home: React.FC = () => {
 
   // Escuchar reloadKey del menú lateral → forzar reconexión completa
   useEffect(() => {
-    if (reloadKey === 0) return; // Ignorar el montaje inicial
+    if (reloadKey === 0) return;
     console.log('🔄 Recarga disparada desde el menú');
     setReady(false);
     setError(null);
@@ -117,6 +136,64 @@ const Home: React.FC = () => {
     setStreamKey(prev => prev + 1);
     setRetryKey(prev => prev + 1);
   }, [reloadKey]);
+
+
+  // ─── GESTIÓN DEL WEBSOCKET ───
+  // Usamos un delay para evitar que React StrictMode (doble montaje en dev)
+  // abra dos conexiones simultáneas que compitan entre sí.
+  useEffect(() => {
+    if (drivingMode !== 'websocket') return;
+
+    let cancelled = false;
+    let ws: WebSocket | null = null;
+
+    // Delay de 300ms: si StrictMode desmonta y remonta, el primer efecto
+    // se cancela antes de abrir el WS, evitando conexiones duplicadas.
+    const timer = setTimeout(() => {
+      if (cancelled) return;
+
+      const wsUrl = ApiService.getWebSocketMotorUrl();
+      console.log(`🔌 Abriendo WebSocket motor: ${wsUrl}`);
+      ws = new WebSocket(wsUrl);
+
+      ws.onopen = () => {
+        if (cancelled) { ws?.close(); return; }
+        console.log('✅ WebSocket motor conectado');
+        setWsConnected(true);
+      };
+
+      ws.onclose = () => {
+        console.log('❌ WebSocket motor cerrado');
+        if (!cancelled) setWsConnected(false);
+      };
+
+      ws.onerror = (err) => {
+        console.warn('⚠️ WebSocket motor error:', err);
+      };
+
+      ws.onmessage = (msg) => {
+        // El backend puede enviar mensajes de error (ej: ESP32 no alcanzable)
+        if (typeof msg.data === 'string' && msg.data.startsWith('ERROR:')) {
+          console.warn('⚠️ WebSocket motor mensaje del backend:', msg.data);
+        }
+      };
+
+      wsRef.current = ws;
+    }, 300);
+
+    // Limpieza al desmontar o cambiar de modo
+    return () => {
+      cancelled = true;
+      clearTimeout(timer);
+      if (ws) {
+        ws.close();
+      }
+      wsRef.current = null;
+      setWsConnected(false);
+    };
+  }, [drivingMode]);
+
+
 
   useEffect(() => {
     let cancelled = false;

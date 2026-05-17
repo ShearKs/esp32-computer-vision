@@ -296,15 +296,31 @@ export const ApiService = {
     }
   },
 
-  // Mover el coche ESP-32 — fire-and-forget, sin timeout agresivo
-  controlRobot(direction: string, speed: number): Promise<void> {
+  // Mover el coche ESP-32 — GET con query params (fire-and-forget)
+  async moveHTTP(direction: string, speed: number): Promise<void> {
     const base = ApiService.getBaseUrl();
-    return fetch(`${base}/api/move?direction=${direction}&speed=${speed}`, { keepalive: true })
-      .then(() => { })
-      .catch(() => { });
+    try {
+      await fetch(`${base}/api/move?direction=${direction}&speed=${speed}`, {
+        method: 'GET',
+        keepalive: true,
+      });
+    } catch (error) {
+      console.error('Error en moveHTTP:', error);
+    }
   },
 
-  
+  // ─── HELPER PARA EL JOYSTICK REAL-TIME ───
+    
+    /**
+     * Devuelve la URL formateada del WebSocket para evitar hardcodeo en las páginas
+     */
+    getWebSocketMotorUrl(): string {
+        // Convertir http(s)://host:port → ws(s)://host:port/ws/motor
+        const wsBase = _baseUrl.replace(/^http/, 'ws');
+        return `${wsBase}/ws/motor`;
+    },
+
+
   subscribeDetections(callback: DetectionsCallback): () => void {
     const base = ApiService.getBaseUrl();
     const es = new EventSource(`${base}/api/stream/yolo/events`);

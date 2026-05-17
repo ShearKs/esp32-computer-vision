@@ -12,6 +12,7 @@
 */
 #include "esp_camera.h"        //ESP32-CAM camera driver
 #include <WiFi.h>              //WiFi library, used to connect to network
+// ESPAsyncWebServer NO necesaria — usamos esp_http_server.h nativo (línea 24)
 #include <Preferences.h>       //NVS storage for persistent WiFi credentials
 #include <ESPmDNS.h>           //mDNS for network discovery (robot-car.local)
 #include "esp_timer.h"         //timer library
@@ -65,6 +66,10 @@ const char *MDNS_NAME = "robot-car";       // mDNS hostname → robot-car.local
 //The variable of speed value is initially 170
 int MOTOR_R_Speed = 170;
 int MOTOR_L_Speed = 170;
+
+// WebSocket motor watchdog: auto-stop si no llegan comandos
+unsigned long lastWsCommandTime = 0;
+const unsigned long WS_COMMAND_TIMEOUT = 500; // 500ms → STOP
 
 // Video Vertical Flip Setting
 // Controls whether the video image is flipped vertically (upside down)
@@ -250,7 +255,38 @@ void setup() {
   startCameraServer();
 }
 
+// ─── Differential drive: aplica PWM directo a cada motor ─────────
+// Valores positivos = adelante, negativos = atrás, rango [-255, 255]
+void applyMotorPWM(int leftPWM, int rightPWM) {
+  leftPWM = constrain(leftPWM, -255, 255);
+  rightPWM = constrain(rightPWM, -255, 255);
+
+  // Motor derecho
+  if (rightPWM >= 0) {
+    ledcWrite(PWM_CH_R1, 0);
+    ledcWrite(PWM_CH_R2, rightPWM);
+  } else {
+    ledcWrite(PWM_CH_R1, -rightPWM);
+    ledcWrite(PWM_CH_R2, 0);
+  }
+
+  // Motor izquierdo
+  if (leftPWM >= 0) {
+    ledcWrite(PWM_CH_L1, leftPWM);
+    ledcWrite(PWM_CH_L2, 0);
+  } else {
+    ledcWrite(PWM_CH_L1, 0);
+    ledcWrite(PWM_CH_L2, -leftPWM);
+  }
+}
+
 void loop() {
+  // Watchdog de seguridad: si el WebSocket deja de enviar, paramos los motores
+  if (lastWsCommandTime > 0 && (millis() - lastWsCommandTime > WS_COMMAND_TIMEOUT)) {
+    applyMotorPWM(0, 0);
+    lastWsCommandTime = 0;
+    Serial.println("WS watchdog: motors stopped");
+  }
 }
 
 //Design control web page
@@ -534,7 +570,7 @@ static esp_err_t action_handler(httpd_req_t *req) {
     }
   }
 
-  httpd_resp_send(req, "", HTTPD_RESP_USE_STRLEN);
+  httpd_resp_send(req, "{\"ok\":true}", HTTPD_RESP_USE_STRLEN);
   return ESP_OK;
 }
 
@@ -643,10 +679,46 @@ static esp_err_t wifi_reset_handler(httpd_req_t *req) {
   return ESP_OK;
 }
 
+// ─── WebSocket handler para control de motores en tiempo real ───
+// Protocolo: texto plano "L:xxx,R:xxx" (valores PWM -255..255)
+static esp_err_t ws_handler(httpd_req_t *req) {
+  // Primera llamada = handshake HTTP GET → aceptar y salir
+  if (req->method == HTTP_GET) {
+    Serial.println("WS: motor client connected");
+    return ESP_OK;
+  }
+
+  // Leer frame WebSocket
+  httpd_ws_frame_t ws_pkt;
+  memset(&ws_pkt, 0, sizeof(httpd_ws_frame_t));
+  ws_pkt.type = HTTPD_WS_TYPE_TEXT;
+
+  // Paso 1: obtener longitud del frame (payload = NULL, len = 0)
+  esp_err_t ret = httpd_ws_recv_frame(req, &ws_pkt, 0);
+  if (ret != ESP_OK) return ret;
+  if (ws_pkt.len == 0 || ws_pkt.len > 32) return ESP_OK;
+
+  // Paso 2: leer el payload real
+  uint8_t buf[33];
+  ws_pkt.payload = buf;
+  ret = httpd_ws_recv_frame(req, &ws_pkt, ws_pkt.len);
+  if (ret != ESP_OK) return ret;
+  buf[ws_pkt.len] = '\0';
+
+  // Parsear "L:xxx,R:xxx"
+  int leftPWM = 0, rightPWM = 0;
+  if (sscanf((char*)buf, "L:%d,R:%d", &leftPWM, &rightPWM) == 2) {
+    applyMotorPWM(leftPWM, rightPWM);
+    lastWsCommandTime = millis();
+  }
+
+  return ESP_OK;
+}
+
 void startCameraServer() {
   httpd_config_t config = HTTPD_DEFAULT_CONFIG();
   config.server_port = 80;
-  config.max_uri_handlers = 12;  // Increased for new WiFi endpoints
+  config.max_uri_handlers = 14;  // +2 para WebSocket
   
   httpd_uri_t index_uri = {
     .uri = "/",
@@ -712,7 +784,17 @@ void startCameraServer() {
     httpd_register_uri_handler(camera_httpd, &wifi_status_uri);
     httpd_register_uri_handler(camera_httpd, &wifi_set_uri);
     httpd_register_uri_handler(camera_httpd, &wifi_reset_uri);
-    Serial.println("HTTP server started on port 80 (/, /action, /health, /wifi-status, /wifi, /wifi-reset)");
+
+    // ─── WebSocket para motores en tiempo real ───
+    httpd_uri_t ws_uri = {
+      .uri = "/ws",
+      .method = HTTP_GET,
+      .handler = ws_handler,
+      .user_ctx = NULL,
+      .is_websocket = true
+    };
+    httpd_register_uri_handler(camera_httpd, &ws_uri);
+    Serial.println("HTTP + WS server started on port 80 (/, /action, /health, /wifi-*, /ws)");
   }
   config.server_port += 1;
   config.ctrl_port += 1;

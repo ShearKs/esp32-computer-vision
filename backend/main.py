@@ -6,10 +6,11 @@ import time
 import urllib.request
 import httpx
 import logging
-from fastapi import FastAPI, BackgroundTasks, File, HTTPException, Query, UploadFile
+from fastapi import FastAPI, BackgroundTasks, File, HTTPException, Query, UploadFile, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 import uvicorn
+import websockets
 from config import settings, NETWORK_PROFILES, ACTIVE_PROFILE, save_active_config, save_profiles, load_profiles, PROFILES_FILE, get_local_ip
 from core_pipeline import run_detection_session, stream_yolo_frames, get_latest_detections, force_release_grabber, switch_model, get_active_model_name
 
@@ -46,7 +47,7 @@ try:
     _current_esp32_port = _saved.get("esp32_port", settings.esp32_stream_port)
     # SIEMPRE auto-detectar el path basándose en el puerto para evitar desincronización
     _current_esp32_path = _auto_path(_current_esp32_port)
-except (FileNotFoundError, _json.JSONDecodeError):
+except (FileNotFoundError, json.JSONDecodeError):
     _current_esp32_ip = settings.esp32_ip
     _current_esp32_port = settings.esp32_stream_port
     _current_esp32_path = _auto_path(settings.esp32_stream_port)
@@ -205,6 +206,9 @@ async def force_reconnect():
 
     # 2. Matar el FrameGrabber activo (YOLO)
     await asyncio.to_thread(force_release_grabber)
+
+    # 2b. Cerrar la conexión WS singleton al ESP32 (si existe)
+    await _close_esp32_ws()
 
     # 3. Parar tracking del stream activo
     _yolo_stream_active = False
@@ -639,7 +643,7 @@ async def switch_yolo_model(model: str = Query(..., description="Nombre del mode
     }
 
 # ═══════════════════════════════════════════════════════
-# MOVIMIENTO DEL COCHE
+# MOVIMIENTO DEL COCHE HTTP
 # ═══════════════════════════════════════════════════════
 
 # Cliente HTTP persistente con keep-alive
@@ -700,6 +704,148 @@ async def move_esp32_car(direction: str, speed: int = 255):
 
 
 # ═══════════════════════════════════════════════════════
+# MOVIMIENTO DEL COCHE - REAL TIME- WEBSOCKETS
+# ═══════════════════════════════════════════════════════
+
+# Singleton: una sola conexión WS al ESP32, compartida entre reconexiones del frontend
+_esp32_ws_lock = asyncio.Lock()
+_esp32_ws_conn = None  # websockets connection object
+
+def _ws_is_open(ws) -> bool:
+    """Comprueba si una conexión websockets está abierta.
+    Compatible con websockets < 13 (.open) y >= 13 (.state)."""
+    if ws is None:
+        return False
+    # websockets < 13
+    if hasattr(ws, 'open'):
+        return ws.open
+    # websockets >= 13: comprobar el estado del protocolo
+    try:
+        from websockets.protocol import State
+        return ws.protocol.state == State.OPEN
+    except Exception:
+        return False
+
+async def _get_or_create_esp32_ws() -> "websockets.WebSocketClientProtocol | None":
+    """Devuelve la conexión WS al ESP32, creándola si no existe o está cerrada.
+    Usa un lock para evitar conexiones duplicadas."""
+    global _esp32_ws_conn
+    async with _esp32_ws_lock:
+        # Si ya hay una conexión abierta, reutilizarla
+        if _ws_is_open(_esp32_ws_conn):
+            return _esp32_ws_conn
+        
+        # Cerrar la anterior si quedó en mal estado
+        if _esp32_ws_conn is not None:
+            try:
+                await _esp32_ws_conn.close()
+            except Exception:
+                pass
+            _esp32_ws_conn = None
+
+        # Intentar conectar al ESP32 con timeout corto (3s)
+        esp32_ws_url = f"ws://{_current_esp32_ip}/ws"
+        try:
+            _esp32_ws_conn = await asyncio.wait_for(
+                websockets.connect(esp32_ws_url, ping_interval=None, close_timeout=2),
+                timeout=3.0
+            )
+            print(f"✅ Conexión WS al ESP32 establecida ({esp32_ws_url})")
+            return _esp32_ws_conn
+        except asyncio.TimeoutError:
+            print(f"⏱️ Timeout conectando WS al ESP32 ({esp32_ws_url})")
+            _esp32_ws_conn = None
+            return None
+        except Exception as e:
+            print(f"❌ Error conectando WS al ESP32: {e}")
+            _esp32_ws_conn = None
+            return None
+
+
+async def _close_esp32_ws():
+    """Cierra la conexión singleton al ESP32."""
+    global _esp32_ws_conn
+    async with _esp32_ws_lock:
+        if _esp32_ws_conn is not None:
+            try:
+                await _esp32_ws_conn.close()
+            except Exception:
+                pass
+            _esp32_ws_conn = None
+
+
+@app.websocket("/ws/motor")
+async def motor_websocket_relay(websocket: WebSocket):
+    """WebSocket para comandos de movimiento en tiempo real.
+    
+    El frontend envía texto plano en formato ligero ("L:xxx,R:xxx").
+    El backend actúa como proxy directo y lo reenvía al ESP32.
+    
+    Usa una conexión singleton al ESP32 para evitar que múltiples
+    conexiones del frontend (por ej. React StrictMode) compitan.
+    """
+    await websocket.accept()
+    print("Frontend conectado al WebSocket de FastApi")
+
+    # Obtener (o crear) la conexión al ESP32
+    esp32_ws = await _get_or_create_esp32_ws()
+    if esp32_ws is None:
+        # No se pudo conectar al ESP32 — informar al frontend y cerrar
+        try:
+            await websocket.send_text("ERROR:ESP32_UNREACHABLE")
+        except Exception:
+            pass
+        print("⚠️ No se pudo conectar al ESP32, cerrando WS del frontend")
+        await websocket.close(code=1011, reason="ESP32 no alcanzable")
+        return
+
+    try:
+        while True:
+            # Escuchar comandos del frontend: formato "L:200,R:-150"
+            data = await websocket.receive_text()
+
+            # Verificar que la conexión al ESP32 sigue viva
+            if not _ws_is_open(esp32_ws):
+                # Intentar reconectar una vez
+                esp32_ws = await _get_or_create_esp32_ws()
+                if esp32_ws is None:
+                    print("⚠️ ESP32 WS perdido, cerrando relay")
+                    break
+
+            try:
+                await esp32_ws.send(data)
+            except Exception as send_err:
+                print(f"⚠️ Error reenviando al ESP32: {send_err}")
+                # Invalidar la conexión para que se re-cree en el siguiente intento
+                await _close_esp32_ws()
+                esp32_ws = await _get_or_create_esp32_ws()
+                if esp32_ws is None:
+                    break
+
+    except WebSocketDisconnect:
+        print("Frontend desconectado del WebSocket de FastApi")
+    except Exception as e:
+        print(f"WebSocket motor error: {e}")
+    finally:
+        # Enviar stop de seguridad si el ESP32 sigue conectado
+        await safe_stop_esp32()
+        print("WebSocket motor relay finalizado")
+
+
+async def safe_stop_esp32():
+    """Envía un comando de parada usando la conexión singleton (si existe)."""
+    global _esp32_ws_conn
+    try:
+        if _ws_is_open(_esp32_ws_conn):
+            await _esp32_ws_conn.send("L:0,R:0")
+            print("🛑 Parada de seguridad enviada al ESP32")
+    except Exception:
+        pass  # Si el coche se apagó del todo, no hacemos nada
+
+
+
+
+# ═══════════════════════════════════════════════════════
 # PARA HACER FOTOS QUE SERVIRAN PARA GUARDARLAS
 # SY HACER NUESTRO PROPIO DATASET
 # ═══════════════════════════════════════════════════════
@@ -736,5 +882,6 @@ async def save_dataset_frame(file: UploadFile = File(...)):
 
 @app.on_event("shutdown")
 async def shutdown_event():
+    await _close_esp32_ws()
     await _motor_client.aclose()
 
